@@ -286,60 +286,63 @@ type decodeThis struct {
 
 var tokenStreamCases []tokenStreamCase = []tokenStreamCase{
 	// streaming token cases
-	{json: `10`, expTokens: []interface{}{float64(10)}},
+	{json: `10`, expTokens: []interface{}{int64(10)}},
+	{json: `10.1`, expTokens: []interface{}{float64(10.1)}},
 	{json: ` [10] `, expTokens: []interface{}{
-		Delim('['), float64(10), Delim(']')}},
+		Delim('['), int64(10), Delim(']')}},
 	{json: ` [false,10,"b"] `, expTokens: []interface{}{
-		Delim('['), false, float64(10), "b", Delim(']')}},
+		Delim('['), false, int64(10), "b", Delim(']')}},
 	{json: `{ "a": 1 }`, expTokens: []interface{}{
-		Delim('{'), "a", float64(1), Delim('}')}},
+		Delim('{'), "a", int64(1), Delim('}')}},
 	{json: `{"a": 1, "b":"3"}`, expTokens: []interface{}{
-		Delim('{'), "a", float64(1), "b", "3", Delim('}')}},
+		Delim('{'), "a", int64(1), "b", "3", Delim('}')}},
+	{json: `{"a": 1.5, "b":"3"}`, expTokens: []interface{}{
+		Delim('{'), "a", float64(1.5), "b", "3", Delim('}')}},
 	{json: ` [{"a": 1},{"a": 2}] `, expTokens: []interface{}{
 		Delim('['),
-		Delim('{'), "a", float64(1), Delim('}'),
-		Delim('{'), "a", float64(2), Delim('}'),
+		Delim('{'), "a", int64(1), Delim('}'),
+		Delim('{'), "a", int64(2), Delim('}'),
 		Delim(']')}},
-	{json: `{"obj": {"a": 1}}`, expTokens: []interface{}{
-		Delim('{'), "obj", Delim('{'), "a", float64(1), Delim('}'),
+	{json: `{"obj": {"a": 1.3}}`, expTokens: []interface{}{
+		Delim('{'), "obj", Delim('{'), "a", float64(1.3), Delim('}'),
 		Delim('}')}},
 	{json: `{"obj": [{"a": 1}]}`, expTokens: []interface{}{
 		Delim('{'), "obj", Delim('['),
-		Delim('{'), "a", float64(1), Delim('}'),
+		Delim('{'), "a", int64(1), Delim('}'),
 		Delim(']'), Delim('}')}},
 
 	// streaming tokens with intermittent Decode()
 	{json: `{ "a": 1 }`, expTokens: []interface{}{
 		Delim('{'), "a",
-		decodeThis{float64(1)},
+		decodeThis{int64(1)},
 		Delim('}')}},
 	{json: ` [ { "a" : 1 } ] `, expTokens: []interface{}{
 		Delim('['),
-		decodeThis{map[string]interface{}{"a": float64(1)}},
+		decodeThis{map[string]interface{}{"a": int64(1)}},
 		Delim(']')}},
 	{json: ` [{"a": 1},{"a": 2}] `, expTokens: []interface{}{
 		Delim('['),
-		decodeThis{map[string]interface{}{"a": float64(1)}},
-		decodeThis{map[string]interface{}{"a": float64(2)}},
+		decodeThis{map[string]interface{}{"a": int64(1)}},
+		decodeThis{map[string]interface{}{"a": int64(2)}},
 		Delim(']')}},
 	{json: `{ "obj" : [ { "a" : 1 } ] }`, expTokens: []interface{}{
 		Delim('{'), "obj", Delim('['),
-		decodeThis{map[string]interface{}{"a": float64(1)}},
+		decodeThis{map[string]interface{}{"a": int64(1)}},
 		Delim(']'), Delim('}')}},
 
 	{json: `{"obj": {"a": 1}}`, expTokens: []interface{}{
 		Delim('{'), "obj",
-		decodeThis{map[string]interface{}{"a": float64(1)}},
+		decodeThis{map[string]interface{}{"a": int64(1)}},
 		Delim('}')}},
 	{json: `{"obj": [{"a": 1}]}`, expTokens: []interface{}{
 		Delim('{'), "obj",
 		decodeThis{[]interface{}{
-			map[string]interface{}{"a": float64(1)},
+			map[string]interface{}{"a": int64(1)},
 		}},
 		Delim('}')}},
-	{json: ` [{"a": 1} {"a": 2}] `, expTokens: []interface{}{
+	{json: ` [{"a": 1} {"a": 2.7}] `, expTokens: []interface{}{
 		Delim('['),
-		decodeThis{map[string]interface{}{"a": float64(1)}},
+		decodeThis{map[string]interface{}{"a": int64(1)}},
 		decodeThis{&SyntaxError{"expected comma after array element", 0}},
 	}},
 	{json: `{ "a" 1 }`, expTokens: []interface{}{

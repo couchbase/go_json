@@ -43,7 +43,8 @@ import (
 // Unmarshal stores one of these in the interface value:
 //
 //	bool, for JSON booleans
-//	float64, for JSON numbers
+//	int64, for JSON numbers that are integers
+//	float64, for JSON numbers that are not integers
 //	string, for JSON strings
 //	[]interface{}, for JSON arrays
 //	map[string]interface{}, for JSON objects
@@ -765,6 +766,12 @@ func (d *decodeState) convertNumber(s string) (interface{}, error) {
 	if d.useNumber {
 		return Number(s), nil
 	}
+
+	i, err := strconv.ParseInt(s, 10, 64)
+	if err == nil {
+		return i, nil
+	}
+
 	f, err := strconv.ParseFloat(s, 64)
 	if err != nil {
 		return nil, &UnmarshalTypeError{"number " + s, reflect.TypeOf(0.0), int64(d.off)}
