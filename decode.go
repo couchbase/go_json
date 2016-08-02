@@ -13,6 +13,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"math"
 	"reflect"
 	"runtime"
 	"strconv"
@@ -768,7 +769,9 @@ func (d *decodeState) convertNumber(s string) (interface{}, error) {
 	}
 
 	i, err := strconv.ParseInt(s, 10, 64)
-	if err == nil {
+	if err == nil &&
+		((i > math.MinInt64 && i < math.MaxInt64) ||
+			strconv.FormatInt(i, 10) == s) {
 		return i, nil
 	}
 
