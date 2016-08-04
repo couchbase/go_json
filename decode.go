@@ -770,6 +770,27 @@ func (d *decodeState) convertNumber(s string) (interface{}, error) {
 		return Number(s), nil
 	}
 
+	// First, we try to parse the number as an int64. If that
+	// fails, we parse it as a float64.
+	//
+	// If the input string has a non-zero fractional part,
+	// ParseInt() will produce an error, and we revert to float64.
+	//
+	// If the input string is an integer, but is less than
+	// MinInt64 or greater than MaxInt64, this is an overflow. In
+	// this case, ParseInt() will not produce an error, and will
+	// silently truncate the overflow to MinInt64 or MaxInt64,
+	// respectively.
+	//
+	// To handle this silent overlfow, we check for one of two
+	// things: (1) the parsed value is neither Mint64 nor
+	// MaxInt64, which would not be the case if there was overflow
+	// and truncation; or (2) the parsed value has the same
+	// decimal string representation as the input string, which
+	// would also not be the case if there was overflow and
+	// truncation.
+	//
+	// If there is overflow, we revert to float64.
 	i, err := strconv.ParseInt(s, 10, 64)
 	if err == nil &&
 		((i > math.MinInt64 && i < math.MaxInt64) ||
