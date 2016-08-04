@@ -986,12 +986,12 @@ var arrayGets int64
 var arrayPuts int64
 var arrayAllocations int64
 
-func getJsonArray() []interface{} {
+func getArray() []interface{} {
 	atomic.AddInt64(&arrayGets, 1)
 	return (arrayInterfacePool.Get()).([]interface{})
 }
 
-func putJsonArray(v []interface{}) {
+func RecycleArray(v []interface{}) {
 	atomic.AddInt64(&arrayPuts, 1)
 	arrayInterfacePool.Put(v[0:0])
 }
@@ -1008,12 +1008,12 @@ func newObjectTemp() interface{} {
 	return make(map[string]interface{}, _MAP_DEFAULT_CAPACITY)
 }
 
-func getJsonMap() map[string]interface{} {
+func getMap() map[string]interface{} {
 	atomic.AddInt64(&objectGets, 1)
 	return (objectInterfacePool.Get()).(map[string]interface{})
 }
 
-func putJsonMap(m map[string]interface{}) {
+func RecycleMap(m map[string]interface{}) {
 	atomic.AddInt64(&objectPuts, 1)
 	for k, _ := range m {
 		m[k] = nil
@@ -1023,7 +1023,7 @@ func putJsonMap(m map[string]interface{}) {
 }
 
 func ReportJson() string {
-	template := " array gets %d\n array puts %d\n array allocs %d\n object gets %d\n object puts %d\n object allocs %d\n"
+	template := "array gets %d array puts %d array allocs %d object gets %d object puts %d object allocs %d"
 	return fmt.Sprintf(template, atomic.LoadInt64(&arrayGets), atomic.LoadInt64(&arrayPuts), atomic.LoadInt64(&arrayAllocations),
 		atomic.LoadInt64(&objectGets), atomic.LoadInt64(&objectPuts), atomic.LoadInt64(&objectAllocations))
 }
@@ -1037,31 +1037,9 @@ func Report() {
 	fmt.Printf("object allocs %d\n", objectAllocations)
 }
 
-func RecycleJson(o interface{}) {
-	// It's a JSON object, a map.
-	m, ok := o.(map[string]interface{})
-	if ok {
-		for _, v := range m {
-			RecycleJson(v)
-		}
-		putJsonMap(m)
-	}
-
-	// It's a JSON array.
-	a, ok := o.([]interface{})
-	if ok {
-		for _, v := range a {
-			RecycleJson(v)
-		}
-		putJsonArray(a)
-	}
-
-	// Don't care about other possibilities.
-}
-
 // arrayInterface is like array but returns []interface{}.
 func (d *decodeState) arrayInterface() []interface{} {
-	var v = getJsonArray()
+	var v = getArray()
 	for {
 		// Look ahead for ] - can only happen on first iteration.
 		op := d.scanWhile(scanSkipSpace)
@@ -1089,7 +1067,7 @@ func (d *decodeState) arrayInterface() []interface{} {
 
 // objectInterface is like object but returns map[string]interface{}.
 func (d *decodeState) objectInterface() map[string]interface{} {
-	m := getJsonMap()
+	m := getMap()
 	for {
 		// Read opening " of string key or closing }.
 		op := d.scanWhile(scanSkipSpace)
