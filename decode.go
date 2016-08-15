@@ -18,7 +18,6 @@ import (
 	"runtime"
 	"strconv"
 	"sync"
-	"sync/atomic"
 	"unicode"
 	"unicode/utf16"
 	"unicode/utf8"
@@ -998,64 +997,36 @@ func (d *decodeState) valueInterface() interface{} {
 var _ARRAY_DEFAULT_CAPACITY = 8
 
 func newArrayInterface() interface{} {
-	atomic.AddInt64(&arrayAllocations, 1)
 	return make([]interface{}, 0, _ARRAY_DEFAULT_CAPACITY)
 }
 
 var arrayInterfacePool = &sync.Pool{New: newArrayInterface}
-var arrayGets int64
-var arrayPuts int64
-var arrayAllocations int64
 
 func getArray() []interface{} {
-	atomic.AddInt64(&arrayGets, 1)
 	return (arrayInterfacePool.Get()).([]interface{})
 }
 
 func RecycleArray(v []interface{}) {
-	atomic.AddInt64(&arrayPuts, 1)
 	arrayInterfacePool.Put(v[0:0])
 }
 
 var objectInterfacePool = &sync.Pool{New: newObjectTemp}
-var objectGets int64
-var objectPuts int64
-var objectAllocations int64
-
 var _MAP_DEFAULT_CAPACITY = 8
 
 func newObjectTemp() interface{} {
-	atomic.AddInt64(&objectAllocations, 1)
 	return make(map[string]interface{}, _MAP_DEFAULT_CAPACITY)
 }
 
 func getMap() map[string]interface{} {
-	atomic.AddInt64(&objectGets, 1)
 	return (objectInterfacePool.Get()).(map[string]interface{})
 }
 
 func RecycleMap(m map[string]interface{}) {
-	atomic.AddInt64(&objectPuts, 1)
 	for k, _ := range m {
 		m[k] = nil
 		delete(m, k)
 	}
 	objectInterfacePool.Put(m)
-}
-
-func ReportJson() string {
-	template := "array gets %d array puts %d array allocs %d object gets %d object puts %d object allocs %d"
-	return fmt.Sprintf(template, atomic.LoadInt64(&arrayGets), atomic.LoadInt64(&arrayPuts), atomic.LoadInt64(&arrayAllocations),
-		atomic.LoadInt64(&objectGets), atomic.LoadInt64(&objectPuts), atomic.LoadInt64(&objectAllocations))
-}
-
-func Report() {
-	fmt.Printf("array gets %d\n", arrayGets)
-	fmt.Printf("array puts %d\n", arrayPuts)
-	fmt.Printf("array allocs %d\n", arrayAllocations)
-	fmt.Printf("object gets %d\n", objectGets)
-	fmt.Printf("object puts %d\n", objectPuts)
-	fmt.Printf("object allocs %d\n", objectAllocations)
 }
 
 // arrayInterface is like array but returns []interface{}.
