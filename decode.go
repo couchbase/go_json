@@ -87,14 +87,11 @@ import (
 // character U+FFFD.
 //
 func Unmarshal(data []byte, v interface{}) error {
-	// Check for well-formedness.
-	// Avoids filling out half a data structure
-	// before discovering a JSON syntax error.
+	// MB-25905 - do not validate initially: our jsons
+	// come from the KV and we'll take a chance to avoid a
+	// costly double scan.
+	// It will work out for us 99.9% of the time
 	var d decodeState
-	err := checkValid(data, &d.scan)
-	if err != nil {
-		return err
-	}
 
 	d.init(data)
 	return d.unmarshal(v)
