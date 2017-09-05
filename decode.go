@@ -1159,10 +1159,18 @@ func unquote(s []byte) (t string, ok bool) {
 }
 
 func unquoteBytes(s []byte) (t []byte, ok bool) {
-	if len(s) < 2 || s[0] != '"' || s[len(s)-1] != '"' {
+	l := len(s)
+	if l < 2 {
 		return
 	}
-	s = s[1 : len(s)-1]
+	if s[0] == ' ' || s[l - 1] == ' ' {
+		s = bytes.TrimSpace(s)
+		l = len(s)
+	}
+	if s[0] != '"' || s[l - 1] != '"' {
+		return
+	}
+	s = s[1 : l - 1]
 
 	// Check for unusual characters. If there are none,
 	// then no unquoting is needed, so return a slice of the
