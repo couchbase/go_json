@@ -87,10 +87,24 @@ import (
 // character U+FFFD.
 //
 func Unmarshal(data []byte, v interface{}) error {
-	// MB-25905 - do not validate initially: our jsons
-	// come from the KV and we'll take a chance to avoid a
-	// costly double scan.
-	// It will work out for us 99.9% of the time
+	// Check for well-formedness.
+	// Avoids filling out half a data structure
+	// before discovering a JSON syntax error.
+	var d decodeState
+	err := checkValid(data, &d.scan)
+	if err != nil {
+		return err
+	}
+
+	d.init(data)
+	return d.unmarshal(v)
+}
+
+// MB-25905 - do not validate initially: our jsons
+// come from the KV and we'll take a chance to avoid a
+// costly double scan.
+// It will work out for us 99.9% of the time
+func UnmarshalNoValidate(data []byte, v interface{}) error {
 	var d decodeState
 
 	d.init(data)
@@ -270,6 +284,7 @@ func (d *decodeState) init(data []byte) *decodeState {
 
 // error aborts the decoding by panicking with err.
 func (d *decodeState) error(err error) {
+	d.saveError(err)
 	panic(err)
 }
 
