@@ -19,8 +19,10 @@ import "strconv"
 // scan is passed in for use by checkValid to avoid an allocation.
 func checkValid(data []byte, scan *scanner) error {
 	scan.reset()
-	for _, c := range data {
+	for scan.offset < len(scan.data) {
+		c := scan.data[scan.offset]
 		scan.bytes++
+		scan.offset++
 		if scan.step(scan, c) == scanError {
 			return scan.err
 		}
@@ -33,16 +35,19 @@ func checkValid(data []byte, scan *scanner) error {
 
 // Validate some alleged JSON.  Return nil iff the JSON is valid.
 func Validate(data []byte) error {
-	s := &scanner{}
-	return checkValid(data, s)
+	return checkValid(data, newScanner(data))
 }
 
 // nextValue splits data after the next whole JSON value,
 // returning that value and the bytes that follow it as separate slices.
 // scan is passed in for use by nextValue to avoid an allocation.
 func nextValue(data []byte, scan *scanner) (value, rest []byte, err error) {
+	start := scan.offset
 	scan.reset()
-	for i, c := range data {
+	for scan.offset < len(scan.data) {
+		i := scan.offset
+		c := data[i]
+		scan.offset++
 		v := scan.step(scan, c)
 		if v >= scanEndObject {
 			switch v {
@@ -51,12 +56,12 @@ func nextValue(data []byte, scan *scanner) (value, rest []byte, err error) {
 			// is not a space, scanEndTop allocates a needless error.
 			case scanEndObject, scanEndArray:
 				if scan.step(scan, ' ') == scanEnd {
-					return data[:i+1], data[i+1:], nil
+					return data[start : i+1], data[i+1:], nil
 				}
 			case scanError:
 				return nil, nil, scan.err
 			case scanEnd:
-				return data[:i], data[i:], nil
+				return data[start:i], data[i:], nil
 			}
 		}
 	}
@@ -87,10 +92,13 @@ func (e *SyntaxError) Error() string { return e.msg }
 // to recognize the end of numbers: is 123 a whole value or
 // the beginning of 12345e+6?).
 type scanner struct {
+
+	// our scanner keeps track of the state of the scan, for fast loops
+	// skipping bytes and traversing strings
+	data   []byte
+	offset int
+
 	// The step is a func to be called to execute the next transition.
-	// Also tried using an integer constant and a single func
-	// with a switch, but using the func directly was 10% faster
-	// on a 64-bit Mac Mini, and it's nicer to read.
 	step func(*scanner, byte) int
 
 	// Reached end of top-level value.
@@ -156,6 +164,11 @@ func (s *scanner) reset() {
 	s.endTop = false
 }
 
+// Sets up a scanner
+func newScanner(data []byte) *scanner {
+	return &scanner{offset: 0, data: data}
+}
+
 // eof tells the scanner that the end of input has been reached.
 // It returns a scan status just as s.step does.
 func (s *scanner) eof() int {
@@ -198,9 +211,34 @@ func isSpace(c byte) bool {
 	return c == ' ' || c == '\t' || c == '\r' || c == '\n'
 }
 
+// skip spaces
+// to be called at the beginning of a token, not at the end, so that
+// a token does not include extra spaces
+// they will be skipped in one go before the next token
+func (s *scanner) skipSpaces(c byte) bool {
+	if isSpace(c) {
+		l := len(s.data)
+
+		for {
+			if s.offset >= l {
+				break
+			}
+			c = s.data[s.offset]
+			if isSpace(c) {
+				s.offset++
+				s.bytes++
+			} else {
+				break
+			}
+		}
+		return true
+	}
+	return false
+}
+
 // stateBeginValueOrEmpty is the state after reading `[`.
 func stateBeginValueOrEmpty(s *scanner, c byte) int {
-	if c <= ' ' && isSpace(c) {
+	if c <= ' ' && s.skipSpaces(c) {
 		return scanSkipSpace
 	}
 	if c == ']' {
@@ -211,7 +249,7 @@ func stateBeginValueOrEmpty(s *scanner, c byte) int {
 
 // stateBeginValue is the state at the beginning of the input.
 func stateBeginValue(s *scanner, c byte) int {
-	if c <= ' ' && isSpace(c) {
+	if c <= ' ' && s.skipSpaces(c) {
 		return scanSkipSpace
 	}
 	switch c {
@@ -251,7 +289,7 @@ func stateBeginValue(s *scanner, c byte) int {
 
 // stateBeginStringOrEmpty is the state after reading `{`.
 func stateBeginStringOrEmpty(s *scanner, c byte) int {
-	if c <= ' ' && isSpace(c) {
+	if c <= ' ' && s.skipSpaces(c) {
 		return scanSkipSpace
 	}
 	if c == '}' {
@@ -264,7 +302,7 @@ func stateBeginStringOrEmpty(s *scanner, c byte) int {
 
 // stateBeginString is the state after reading `{"key": value,`.
 func stateBeginString(s *scanner, c byte) int {
-	if c <= ' ' && isSpace(c) {
+	if c <= ' ' && s.skipSpaces(c) {
 		return scanSkipSpace
 	}
 	if c == '"' {
@@ -335,16 +373,25 @@ func stateEndTop(s *scanner, c byte) int {
 
 // stateInString is the state after reading `"`.
 func stateInString(s *scanner, c byte) int {
-	if c == '"' {
-		s.step = stateEndValue
-		return scanContinue
-	}
-	if c == '\\' {
-		s.step = stateInStringEsc
-		return scanContinue
-	}
-	if c < 0x20 {
-		return s.error(c, "in string literal")
+	l := len(s.data)
+	for {
+		if c == '"' {
+			s.step = stateEndValue
+			return scanContinue
+		}
+		if c == '\\' {
+			s.step = stateInStringEsc
+			return scanContinue
+		}
+		if c < 0x20 {
+			return s.error(c, "in string literal")
+		}
+		if s.offset >= l {
+			break
+		}
+		c = s.data[s.offset]
+		s.offset++
+		s.bytes++
 	}
 	return scanContinue
 }
@@ -619,6 +666,7 @@ func (s *scanner) undo(scanCode int) {
 	s.redoState = s.step
 	s.step = stateRedo
 	s.redo = true
+	s.offset--
 }
 
 // stateRedo helps implement the scanner's 1-byte undo.

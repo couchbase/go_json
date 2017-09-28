@@ -15,8 +15,8 @@ type Decoder struct {
 	r     io.Reader
 	buf   []byte
 	d     decodeState
-	scanp int // start of unread data in buf
-	scan  scanner
+	start int // start of unread data in buf
+	scan  *scanner
 	err   error
 
 	tokenState int
@@ -28,7 +28,7 @@ type Decoder struct {
 // The decoder introduces its own buffering and may
 // read data from r beyond the JSON values requested.
 func NewDecoder(r io.Reader) *Decoder {
-	return &Decoder{r: r}
+	return &Decoder{r: r, scan: newScanner(nil)}
 }
 
 // UseNumber causes the Decoder to unmarshal a number into an interface{} as a
@@ -58,8 +58,14 @@ func (dec *Decoder) Decode(v interface{}) error {
 	if err != nil {
 		return err
 	}
-	dec.d.init(dec.buf[dec.scanp : dec.scanp+n])
-	dec.scanp += n
+
+	// we should have a scanner buffer by now
+	if dec.scan.data == nil {
+		return errors.New("Uninitialized scanner buffer")
+	}
+
+	dec.d.init(dec.scan.data[dec.start : dec.start+n])
+	dec.start += n
 
 	// Don't save err from unmarshal into dec.err:
 	// the connection is still usable since we read a complete JSON
@@ -75,31 +81,38 @@ func (dec *Decoder) Decode(v interface{}) error {
 // Buffered returns a reader of the data remaining in the Decoder's
 // buffer. The reader is valid until the next call to Decode.
 func (dec *Decoder) Buffered() io.Reader {
-	return bytes.NewReader(dec.buf[dec.scanp:])
+	if dec.scan.data == nil {
+		return nil
+	}
+	return bytes.NewReader(dec.scan.data[dec.start:])
 }
 
-// readValue reads a JSON value into dec.buf.
+// readValue reads a JSON value into the scanner data buffer
 // It returns the length of the encoding.
 func (dec *Decoder) readValue() (int, error) {
 	dec.scan.reset()
+	dec.scan.offset = dec.start
 
-	scanp := dec.scanp
+	start := dec.start
 	var err error
 Input:
 	for {
 		// Look in the buffer for a new value.
-		for i, c := range dec.buf[scanp:] {
+		for dec.scan.offset < len(dec.scan.data) {
+			i := dec.scan.offset
+			c := dec.scan.data[i]
+			dec.scan.offset++
 			dec.scan.bytes++
-			v := dec.scan.step(&dec.scan, c)
+			v := dec.scan.step(dec.scan, c)
 			if v == scanEnd {
-				scanp += i
+				start = i
 				break Input
 			}
 			// scanEnd is delayed one byte.
 			// We might block trying to get that byte from src,
 			// so instead invent a space byte.
-			if (v == scanEndObject || v == scanEndArray) && dec.scan.step(&dec.scan, ' ') == scanEnd {
-				scanp += i + 1
+			if (v == scanEndObject || v == scanEndArray) && dec.scan.step(dec.scan, ' ') == scanEnd {
+				start = i + 1
 				break Input
 			}
 			if v == scanError {
@@ -107,16 +120,16 @@ Input:
 				return 0, dec.scan.err
 			}
 		}
-		scanp = len(dec.buf)
+		start = len(dec.scan.data)
 
 		// Did the last read have an error?
 		// Delayed until now to allow buffer scan.
 		if err != nil {
 			if err == io.EOF {
-				if dec.scan.step(&dec.scan, ' ') == scanEnd {
+				if dec.scan.step(dec.scan, ' ') == scanEnd {
 					break Input
 				}
-				if nonSpace(dec.buf) {
+				if nonSpace(dec.scan.data) {
 					err = io.ErrUnexpectedEOF
 				}
 			}
@@ -124,35 +137,43 @@ Input:
 			return 0, err
 		}
 
-		n := scanp - dec.scanp
-		err = dec.refill()
-		scanp = dec.scanp + n
+		var adjust int
+		adjust, err = dec.refill()
+		start -= adjust
 	}
-	return scanp - dec.scanp, nil
+	return start - dec.start, nil
 }
 
-func (dec *Decoder) refill() error {
+func (dec *Decoder) refill() (int, error) {
+	adjust := 0
+
 	// Make room to read more into the buffer.
 	// First slide down data already consumed.
-	if dec.scanp > 0 {
-		n := copy(dec.buf, dec.buf[dec.scanp:])
-		dec.buf = dec.buf[:n]
-		dec.scanp = 0
+	if dec.start > 0 {
+		n := copy(dec.scan.data, dec.scan.data[dec.start:])
+		dec.scan.data = dec.scan.data[:n]
+		adjust = dec.start
+		dec.start = 0
+		if dec.scan.offset > adjust {
+			dec.scan.offset -= adjust
+		} else {
+			dec.scan.offset = 0
+		}
 	}
 
 	// Grow buffer if not large enough.
 	const minRead = 512
-	if cap(dec.buf)-len(dec.buf) < minRead {
-		newBuf := make([]byte, len(dec.buf), 2*cap(dec.buf)+minRead)
-		copy(newBuf, dec.buf)
-		dec.buf = newBuf
+	if cap(dec.scan.data)-len(dec.scan.data) < minRead {
+		newBuf := make([]byte, len(dec.scan.data), 2*cap(dec.scan.data)+minRead)
+		copy(newBuf, dec.scan.data)
+		dec.scan.data = newBuf
 	}
 
 	// Read. Delay error for next iteration (after scan).
-	n, err := dec.r.Read(dec.buf[len(dec.buf):cap(dec.buf)])
-	dec.buf = dec.buf[0 : len(dec.buf)+n]
+	n, err := dec.r.Read(dec.scan.data[len(dec.scan.data):cap(dec.scan.data)])
+	dec.scan.data = dec.scan.data[0 : len(dec.scan.data)+n]
 
-	return err
+	return adjust, err
 }
 
 func nonSpace(b []byte) bool {
@@ -300,7 +321,7 @@ func (dec *Decoder) tokenPrepareForDecode() error {
 		if c != ',' {
 			return &SyntaxError{"expected comma after array element", 0}
 		}
-		dec.scanp++
+		dec.start++
 		dec.tokenState = tokenArrayValue
 	case tokenObjectColon:
 		c, err := dec.peek()
@@ -310,7 +331,7 @@ func (dec *Decoder) tokenPrepareForDecode() error {
 		if c != ':' {
 			return &SyntaxError{"expected colon after object key", 0}
 		}
-		dec.scanp++
+		dec.start++
 		dec.tokenState = tokenObjectValue
 	}
 	return nil
@@ -362,7 +383,7 @@ func (dec *Decoder) Token() (Token, error) {
 			if !dec.tokenValueAllowed() {
 				return dec.tokenError(c)
 			}
-			dec.scanp++
+			dec.start++
 			dec.tokenStack = append(dec.tokenStack, dec.tokenState)
 			dec.tokenState = tokenArrayStart
 			return Delim('['), nil
@@ -371,7 +392,7 @@ func (dec *Decoder) Token() (Token, error) {
 			if dec.tokenState != tokenArrayStart && dec.tokenState != tokenArrayComma {
 				return dec.tokenError(c)
 			}
-			dec.scanp++
+			dec.start++
 			dec.tokenState = dec.tokenStack[len(dec.tokenStack)-1]
 			dec.tokenStack = dec.tokenStack[:len(dec.tokenStack)-1]
 			dec.tokenValueEnd()
@@ -381,7 +402,7 @@ func (dec *Decoder) Token() (Token, error) {
 			if !dec.tokenValueAllowed() {
 				return dec.tokenError(c)
 			}
-			dec.scanp++
+			dec.start++
 			dec.tokenStack = append(dec.tokenStack, dec.tokenState)
 			dec.tokenState = tokenObjectStart
 			return Delim('{'), nil
@@ -390,7 +411,7 @@ func (dec *Decoder) Token() (Token, error) {
 			if dec.tokenState != tokenObjectStart && dec.tokenState != tokenObjectComma {
 				return dec.tokenError(c)
 			}
-			dec.scanp++
+			dec.start++
 			dec.tokenState = dec.tokenStack[len(dec.tokenStack)-1]
 			dec.tokenStack = dec.tokenStack[:len(dec.tokenStack)-1]
 			dec.tokenValueEnd()
@@ -400,18 +421,18 @@ func (dec *Decoder) Token() (Token, error) {
 			if dec.tokenState != tokenObjectColon {
 				return dec.tokenError(c)
 			}
-			dec.scanp++
+			dec.start++
 			dec.tokenState = tokenObjectValue
 			continue
 
 		case ',':
 			if dec.tokenState == tokenArrayComma {
-				dec.scanp++
+				dec.start++
 				dec.tokenState = tokenArrayValue
 				continue
 			}
 			if dec.tokenState == tokenObjectComma {
-				dec.scanp++
+				dec.start++
 				dec.tokenState = tokenObjectKey
 				continue
 			}
@@ -482,19 +503,19 @@ func (dec *Decoder) More() bool {
 func (dec *Decoder) peek() (byte, error) {
 	var err error
 	for {
-		for i := dec.scanp; i < len(dec.buf); i++ {
-			c := dec.buf[i]
+		for i := dec.start; i < len(dec.scan.data); i++ {
+			c := dec.scan.data[i]
 			if isSpace(c) {
 				continue
 			}
-			dec.scanp = i
+			dec.start = i
 			return c, nil
 		}
 		// buffer has been scanned, now report any error
 		if err != nil {
 			return 0, err
 		}
-		err = dec.refill()
+		_, err = dec.refill()
 	}
 }
 

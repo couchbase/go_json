@@ -181,8 +181,8 @@ func TestIndentErrors(t *testing.T) {
 
 func TestNextValueBig(t *testing.T) {
 	initBig()
-	var scan scanner
-	item, rest, err := nextValue(jsonBig, &scan)
+	scan := newScanner(jsonBig)
+	item, rest, err := nextValue(jsonBig, scan)
 	if err != nil {
 		t.Fatalf("nextValue: %s", err)
 	}
@@ -193,7 +193,8 @@ func TestNextValueBig(t *testing.T) {
 		t.Errorf("invalid rest: %d", len(rest))
 	}
 
-	item, rest, err = nextValue(append(jsonBig, "HELLO WORLD"...), &scan)
+	scan = newScanner(jsonBig)
+	item, rest, err = nextValue(append(jsonBig, "HELLO WORLD"...), scan)
 	if err != nil {
 		t.Fatalf("nextValue extra: %s", err)
 	}

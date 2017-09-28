@@ -91,7 +91,7 @@ func Unmarshal(data []byte, v interface{}) error {
 	// Avoids filling out half a data structure
 	// before discovering a JSON syntax error.
 	var d decodeState
-	err := checkValid(data, &d.scan)
+	err := checkValid(data, newScanner(data))
 	if err != nil {
 		return err
 	}
@@ -262,10 +262,7 @@ func isValidNumber(s string) bool {
 
 // decodeState represents the state while decoding a JSON value.
 type decodeState struct {
-	data       []byte
-	off        int // read offset in data
 	scan       scanner
-	nextscan   scanner // for calls to nextValue
 	savedError error
 	useNumber  bool
 }
@@ -276,8 +273,8 @@ type decodeState struct {
 var errPhase = errors.New("JSON decoder out of sync - data changing underfoot?")
 
 func (d *decodeState) init(data []byte) *decodeState {
-	d.data = data
-	d.off = 0
+	d.scan.data = data
+	d.scan.offset = 0
 	d.savedError = nil
 	return d
 }
@@ -296,15 +293,17 @@ func (d *decodeState) saveError(err error) {
 	}
 }
 
-// next cuts off and returns the next full JSON value in d.data[d.off:].
+// next cuts off and returns the next full JSON value in d.scan.data[d.scan.offset:].
 // The next value is known to be an object or array, not a literal.
 func (d *decodeState) next() []byte {
-	c := d.data[d.off]
-	item, rest, err := nextValue(d.data[d.off:], &d.nextscan)
+	ns := newScanner(d.scan.data)
+	ns.offset = d.scan.offset
+	c := d.scan.data[d.scan.offset]
+	item, rest, err := nextValue(d.scan.data, ns)
 	if err != nil {
 		d.error(err)
 	}
-	d.off = len(d.data) - len(rest)
+	d.scan.offset = len(d.scan.data) - len(rest)
 
 	// Our scanner has seen the opening brace/bracket
 	// and thinks we're still in the middle of the object.
@@ -318,18 +317,19 @@ func (d *decodeState) next() []byte {
 	return item
 }
 
-// scanWhile processes bytes in d.data[d.off:] until it
+// scanWhile processes bytes in d.scan.data[d.scan.offset:] until it
 // receives a scan code not equal to op.
-// It updates d.off and returns the new scan code.
+// It updates d.scan.offset and returns the new scan code.
 func (d *decodeState) scanWhile(op int) int {
 	var newOp int
+
 	for {
-		if d.off >= len(d.data) {
+		if d.scan.offset >= len(d.scan.data) {
 			newOp = d.scan.eof()
-			d.off = len(d.data) + 1 // mark processed EOF with len+1
+			d.scan.offset = len(d.scan.data) + 1 // mark processed EOF with len+1
 		} else {
-			c := d.data[d.off]
-			d.off++
+			c := d.scan.data[d.scan.offset]
+			d.scan.offset++
 			newOp = d.scan.step(&d.scan, c)
 		}
 		if newOp != op {
@@ -339,15 +339,17 @@ func (d *decodeState) scanWhile(op int) int {
 	return newOp
 }
 
-// value decodes a JSON value from d.data[d.off:] into the value.
-// it updates d.off to point past the decoded value.
+// value decodes a JSON value from d.scan.data[d.scan.offset:] into the value.
+// it updates d.scan.offset to point past the decoded value.
 func (d *decodeState) value(v reflect.Value) {
 	if !v.IsValid() {
-		_, rest, err := nextValue(d.data[d.off:], &d.nextscan)
+		ns := newScanner(d.scan.data)
+		ns.offset = d.scan.offset
+		_, rest, err := nextValue(d.scan.data, ns)
 		if err != nil {
 			d.error(err)
 		}
-		d.off = len(d.data) - len(rest)
+		d.scan.offset = len(d.scan.data) - len(rest)
 
 		// d.scan thinks we're still at the beginning of the item.
 		// Feed in an empty string - the shortest, simplest value -
@@ -458,13 +460,13 @@ func (d *decodeState) indirect(v reflect.Value, decodingNull bool) (Unmarshaler,
 	return nil, nil, v
 }
 
-// array consumes an array from d.data[d.off-1:], decoding into the value v.
+// array consumes an array from d.scan.data[d.scan.offset-1:], decoding into the value v.
 // the first byte of the array ('[') has been read already.
 func (d *decodeState) array(v reflect.Value) {
 	// Check for unmarshaler.
 	u, ut, pv := d.indirect(v, false)
 	if u != nil {
-		d.off--
+		d.scan.offset--
 		err := u.UnmarshalJSON(d.next())
 		if err != nil {
 			d.error(err)
@@ -472,8 +474,8 @@ func (d *decodeState) array(v reflect.Value) {
 		return
 	}
 	if ut != nil {
-		d.saveError(&UnmarshalTypeError{"array", v.Type(), int64(d.off)})
-		d.off--
+		d.saveError(&UnmarshalTypeError{"array", v.Type(), int64(d.scan.offset)})
+		d.scan.offset--
 		d.next()
 		return
 	}
@@ -491,8 +493,8 @@ func (d *decodeState) array(v reflect.Value) {
 		// Otherwise it's invalid.
 		fallthrough
 	default:
-		d.saveError(&UnmarshalTypeError{"array", v.Type(), int64(d.off)})
-		d.off--
+		d.saveError(&UnmarshalTypeError{"array", v.Type(), int64(d.scan.offset)})
+		d.scan.offset--
 		d.next()
 		return
 	case reflect.Array:
@@ -509,7 +511,6 @@ func (d *decodeState) array(v reflect.Value) {
 		}
 
 		// Back up so d.value can have the byte we just read.
-		d.off--
 		d.scan.undo(op)
 
 		// Get element of array, growing if necessary.
@@ -567,13 +568,13 @@ func (d *decodeState) array(v reflect.Value) {
 var nullLiteral = []byte("null")
 var textUnmarshalerType = reflect.TypeOf(new(encoding.TextUnmarshaler)).Elem()
 
-// object consumes an object from d.data[d.off-1:], decoding into the value v.
+// object consumes an object from d.scan.data[d.scan.offset-1:], decoding into the value v.
 // the first byte ('{') of the object has been read already.
 func (d *decodeState) object(v reflect.Value) {
 	// Check for unmarshaler.
 	u, ut, pv := d.indirect(v, false)
 	if u != nil {
-		d.off--
+		d.scan.offset--
 		err := u.UnmarshalJSON(d.next())
 		if err != nil {
 			d.error(err)
@@ -581,8 +582,8 @@ func (d *decodeState) object(v reflect.Value) {
 		return
 	}
 	if ut != nil {
-		d.saveError(&UnmarshalTypeError{"object", v.Type(), int64(d.off)})
-		d.off--
+		d.saveError(&UnmarshalTypeError{"object", v.Type(), int64(d.scan.offset)})
+		d.scan.offset--
 		d.next() // skip over { } in input
 		return
 	}
@@ -609,8 +610,8 @@ func (d *decodeState) object(v reflect.Value) {
 			reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
 		default:
 			if !reflect.PtrTo(t.Key()).Implements(textUnmarshalerType) {
-				d.saveError(&UnmarshalTypeError{"object", v.Type(), int64(d.off)})
-				d.off--
+				d.saveError(&UnmarshalTypeError{"object", v.Type(), int64(d.scan.offset)})
+				d.scan.offset--
 				d.next() // skip over { } in input
 				return
 			}
@@ -621,8 +622,8 @@ func (d *decodeState) object(v reflect.Value) {
 	case reflect.Struct:
 
 	default:
-		d.saveError(&UnmarshalTypeError{"object", v.Type(), int64(d.off)})
-		d.off--
+		d.saveError(&UnmarshalTypeError{"object", v.Type(), int64(d.scan.offset)})
+		d.scan.offset--
 		d.next() // skip over { } in input
 		return
 	}
@@ -641,9 +642,9 @@ func (d *decodeState) object(v reflect.Value) {
 		}
 
 		// Read key.
-		start := d.off - 1
+		start := d.scan.offset - 1
 		op = d.scanWhile(scanContinue)
-		item := d.data[start : d.off-1]
+		item := d.scan.data[start : d.scan.offset-1]
 		key, ok := unquoteBytes(item)
 		if !ok {
 			d.error(errPhase)
@@ -759,19 +760,19 @@ func (d *decodeState) object(v reflect.Value) {
 	}
 }
 
-// literal consumes a literal from d.data[d.off-1:], decoding into the value v.
+// literal consumes a literal from d.scan.data[d.scan.offset-1:], decoding into the value v.
 // The first byte of the literal has been read already
 // (that's how the caller knows it's a literal).
 func (d *decodeState) literal(v reflect.Value) {
 	// All bytes inside literal return scanContinue op code.
-	start := d.off - 1
+	start := d.scan.offset - 1
 	op := d.scanWhile(scanContinue)
 
 	// Scan read one byte too far; back up.
-	d.off--
 	d.scan.undo(op)
+	end := d.scan.offset
 
-	d.literalStore(d.data[start:d.off], v, false)
+	d.literalStore(d.scan.data[start:end], v, false)
 }
 
 // convertNumber converts the number literal s to a float64 or a Number
@@ -811,7 +812,7 @@ func (d *decodeState) convertNumber(s string) (interface{}, error) {
 
 	f, err := strconv.ParseFloat(s, 64)
 	if err != nil {
-		return nil, &UnmarshalTypeError{"number " + s, reflect.TypeOf(0.0), int64(d.off)}
+		return nil, &UnmarshalTypeError{"number " + s, reflect.TypeOf(0.0), int64(d.scan.offset)}
 	}
 	return f, nil
 }
@@ -844,7 +845,7 @@ func (d *decodeState) literalStore(item []byte, v reflect.Value, fromQuoted bool
 			if fromQuoted {
 				d.saveError(fmt.Errorf("json: invalid use of ,string struct tag, trying to unmarshal %q into %v", item, v.Type()))
 			} else {
-				d.saveError(&UnmarshalTypeError{"string", v.Type(), int64(d.off)})
+				d.saveError(&UnmarshalTypeError{"string", v.Type(), int64(d.scan.offset)})
 			}
 			return
 		}
@@ -879,7 +880,7 @@ func (d *decodeState) literalStore(item []byte, v reflect.Value, fromQuoted bool
 			if fromQuoted {
 				d.saveError(fmt.Errorf("json: invalid use of ,string struct tag, trying to unmarshal %q into %v", item, v.Type()))
 			} else {
-				d.saveError(&UnmarshalTypeError{"bool", v.Type(), int64(d.off)})
+				d.saveError(&UnmarshalTypeError{"bool", v.Type(), int64(d.scan.offset)})
 			}
 		case reflect.Bool:
 			v.SetBool(value)
@@ -887,7 +888,7 @@ func (d *decodeState) literalStore(item []byte, v reflect.Value, fromQuoted bool
 			if v.NumMethod() == 0 {
 				v.Set(reflect.ValueOf(value))
 			} else {
-				d.saveError(&UnmarshalTypeError{"bool", v.Type(), int64(d.off)})
+				d.saveError(&UnmarshalTypeError{"bool", v.Type(), int64(d.scan.offset)})
 			}
 		}
 
@@ -902,10 +903,10 @@ func (d *decodeState) literalStore(item []byte, v reflect.Value, fromQuoted bool
 		}
 		switch v.Kind() {
 		default:
-			d.saveError(&UnmarshalTypeError{"string", v.Type(), int64(d.off)})
+			d.saveError(&UnmarshalTypeError{"string", v.Type(), int64(d.scan.offset)})
 		case reflect.Slice:
 			if v.Type().Elem().Kind() != reflect.Uint8 {
-				d.saveError(&UnmarshalTypeError{"string", v.Type(), int64(d.off)})
+				d.saveError(&UnmarshalTypeError{"string", v.Type(), int64(d.scan.offset)})
 				break
 			}
 			b := make([]byte, base64.StdEncoding.DecodedLen(len(s)))
@@ -921,7 +922,7 @@ func (d *decodeState) literalStore(item []byte, v reflect.Value, fromQuoted bool
 			if v.NumMethod() == 0 {
 				v.Set(reflect.ValueOf(string(s)))
 			} else {
-				d.saveError(&UnmarshalTypeError{"string", v.Type(), int64(d.off)})
+				d.saveError(&UnmarshalTypeError{"string", v.Type(), int64(d.scan.offset)})
 			}
 		}
 
@@ -946,7 +947,7 @@ func (d *decodeState) literalStore(item []byte, v reflect.Value, fromQuoted bool
 			if fromQuoted {
 				d.error(fmt.Errorf("json: invalid use of ,string struct tag, trying to unmarshal %q into %v", item, v.Type()))
 			} else {
-				d.error(&UnmarshalTypeError{"number", v.Type(), int64(d.off)})
+				d.error(&UnmarshalTypeError{"number", v.Type(), int64(d.scan.offset)})
 			}
 		case reflect.Interface:
 			n, err := d.convertNumber(s)
@@ -955,7 +956,7 @@ func (d *decodeState) literalStore(item []byte, v reflect.Value, fromQuoted bool
 				break
 			}
 			if v.NumMethod() != 0 {
-				d.saveError(&UnmarshalTypeError{"number", v.Type(), int64(d.off)})
+				d.saveError(&UnmarshalTypeError{"number", v.Type(), int64(d.scan.offset)})
 				break
 			}
 			v.Set(reflect.ValueOf(n))
@@ -963,7 +964,7 @@ func (d *decodeState) literalStore(item []byte, v reflect.Value, fromQuoted bool
 		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 			n, err := strconv.ParseInt(s, 10, 64)
 			if err != nil || v.OverflowInt(n) {
-				d.saveError(&UnmarshalTypeError{"number " + s, v.Type(), int64(d.off)})
+				d.saveError(&UnmarshalTypeError{"number " + s, v.Type(), int64(d.scan.offset)})
 				break
 			}
 			v.SetInt(n)
@@ -971,7 +972,7 @@ func (d *decodeState) literalStore(item []byte, v reflect.Value, fromQuoted bool
 		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
 			n, err := strconv.ParseUint(s, 10, 64)
 			if err != nil || v.OverflowUint(n) {
-				d.saveError(&UnmarshalTypeError{"number " + s, v.Type(), int64(d.off)})
+				d.saveError(&UnmarshalTypeError{"number " + s, v.Type(), int64(d.scan.offset)})
 				break
 			}
 			v.SetUint(n)
@@ -979,7 +980,7 @@ func (d *decodeState) literalStore(item []byte, v reflect.Value, fromQuoted bool
 		case reflect.Float32, reflect.Float64:
 			n, err := strconv.ParseFloat(s, v.Type().Bits())
 			if err != nil || v.OverflowFloat(n) {
-				d.saveError(&UnmarshalTypeError{"number " + s, v.Type(), int64(d.off)})
+				d.saveError(&UnmarshalTypeError{"number " + s, v.Type(), int64(d.scan.offset)})
 				break
 			}
 			v.SetFloat(n)
@@ -1052,7 +1053,6 @@ func (d *decodeState) arrayInterface() []interface{} {
 		}
 
 		// Back up so d.value can have the byte we just read.
-		d.off--
 		d.scan.undo(op)
 
 		v = append(v, d.valueInterface())
@@ -1084,9 +1084,9 @@ func (d *decodeState) objectInterface() map[string]interface{} {
 		}
 
 		// Read string key.
-		start := d.off - 1
+		start := d.scan.offset - 1
 		op = d.scanWhile(scanContinue)
-		item := d.data[start : d.off-1]
+		item := d.scan.data[start : d.scan.offset-1]
 		key, ok := unquote(item)
 		if !ok {
 			d.error(errPhase)
@@ -1118,13 +1118,12 @@ func (d *decodeState) objectInterface() map[string]interface{} {
 // literalInterface is like literal but returns an interface value.
 func (d *decodeState) literalInterface() interface{} {
 	// All bytes inside literal return scanContinue op code.
-	start := d.off - 1
+	start := d.scan.offset - 1
 	op := d.scanWhile(scanContinue)
 
 	// Scan read one byte too far; back up.
-	d.off--
 	d.scan.undo(op)
-	item := d.data[start:d.off]
+	item := d.scan.data[start:d.scan.offset]
 
 	switch c := item[0]; c {
 	case 'n': // null
@@ -1178,14 +1177,14 @@ func unquoteBytes(s []byte) (t []byte, ok bool) {
 	if l < 2 {
 		return
 	}
-	if s[0] == ' ' || s[l - 1] == ' ' {
+	if s[0] == ' ' || s[l-1] == ' ' {
 		s = bytes.TrimSpace(s)
 		l = len(s)
 	}
-	if s[0] != '"' || s[l - 1] != '"' {
+	if s[0] != '"' || s[l-1] != '"' {
 		return
 	}
-	s = s[1 : l - 1]
+	s = s[1 : l-1]
 
 	// Check for unusual characters. If there are none,
 	// then no unquoting is needed, so return a slice of the

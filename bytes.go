@@ -122,26 +122,25 @@ func Find(data []byte, path string) ([]byte, error) {
 
 	needle := parsePointer(path)
 
-	scan := &scanner{}
+	scan := newScanner(data)
 	scan.reset()
 
-	offset := 0
 	beganLiteral := 0
 	current := make([]string, 0, 32)
-	for {
-		if offset >= len(data) {
-			break
-		}
-		newOp := scan.step(scan, data[offset])
-		offset++
+	for scan.offset < len(scan.data) {
+
+		oldOffset := scan.offset
+		c := data[oldOffset]
+		scan.offset++
+		newOp := scan.step(scan, c)
 
 		switch newOp {
 		case scanBeginArray:
 			current = append(current, "0")
 		case scanObjectKey:
-			current[len(current)-1] = grokLiteral(data[beganLiteral-1 : offset-1])
+			current[len(current)-1] = grokLiteral(data[beganLiteral-1 : oldOffset])
 		case scanBeginLiteral:
-			beganLiteral = offset
+			beganLiteral = scan.offset
 		case scanArrayValue:
 			n := mustParseInt(current[len(current)-1])
 			current[len(current)-1] = strconv.Itoa(n + 1)
@@ -156,16 +155,15 @@ func Find(data []byte, path string) ([]byte, error) {
 
 		if (newOp == scanBeginArray || newOp == scanArrayValue ||
 			newOp == scanObjectKey) && arreq(needle, current) {
-			otmp := offset
+			otmp := scan.offset
 			for isSpace(data[otmp]) {
 				otmp++
 			}
 			if data[otmp] == ']' {
 				// special case an array offset miss
-				offset = otmp
 				return nil, nil
 			}
-			val, _, err := nextValue(data[offset:], scan)
+			val, _, err := nextValue(data, scan)
 			return val, err
 		}
 	}
@@ -197,26 +195,27 @@ func ListPointers(data []byte) ([]string, error) {
 	}
 	rv := []string{""}
 
-	scan := &scanner{}
+	scan := newScanner(data)
 	scan.reset()
 
-	offset := 0
 	beganLiteral := 0
 	var current []string
 	for {
-		if offset >= len(data) {
+		if scan.offset >= len(data) {
 			return rv, nil
 		}
-		newOp := scan.step(scan, data[offset])
-		offset++
+		oldOffset := scan.offset
+		c := data[oldOffset]
+		scan.offset++
+		newOp := scan.step(scan, c)
 
 		switch newOp {
 		case scanBeginArray:
 			current = append(current, "0")
 		case scanObjectKey:
-			current[len(current)-1] = grokLiteral(data[beganLiteral-1 : offset-1])
+			current[len(current)-1] = grokLiteral(data[beganLiteral-1 : oldOffset])
 		case scanBeginLiteral:
-			beganLiteral = offset
+			beganLiteral = scan.offset
 		case scanArrayValue:
 			n := mustParseInt(current[len(current)-1])
 			current[len(current)-1] = strconv.Itoa(n + 1)
@@ -225,7 +224,7 @@ func ListPointers(data []byte) ([]string, error) {
 		case scanBeginObject:
 			current = append(current, "")
 		case scanError:
-			return nil, fmt.Errorf("Error reading JSON object at offset %v", offset)
+			return nil, fmt.Errorf("Error reading JSON object at offset %v", oldOffset)
 		}
 
 		if newOp == scanBeginArray || newOp == scanArrayValue ||
@@ -248,28 +247,29 @@ func FindMany(data []byte, paths []string) (map[string][]byte, error) {
 	}
 	sort.Strings(tpaths)
 
-	scan := &scanner{}
+	scan := newScanner(data)
 	scan.reset()
 
-	offset := 0
 	todo := len(tpaths)
 	beganLiteral := 0
 	matchedAt := 0
 	var current []string
 	for todo > 0 {
-		if offset >= len(data) {
+		if scan.offset >= len(data) {
 			break
 		}
-		newOp := scan.step(scan, data[offset])
-		offset++
+		oldOffset := scan.offset
+		c := data[oldOffset]
+		scan.offset++
+		newOp := scan.step(scan, c)
 
 		switch newOp {
 		case scanBeginArray:
 			current = append(current, "0")
 		case scanObjectKey:
-			current[len(current)-1] = grokLiteral(data[beganLiteral-1 : offset-1])
+			current[len(current)-1] = grokLiteral(data[beganLiteral-1 : oldOffset])
 		case scanBeginLiteral:
-			beganLiteral = offset
+			beganLiteral = scan.offset
 		case scanArrayValue:
 			n := mustParseInt(current[len(current)-1])
 			current[len(current)-1] = strconv.Itoa(n + 1)
@@ -308,8 +308,9 @@ func FindMany(data []byte, paths []string) (map[string][]byte, error) {
 			}
 
 			// At this point, we have an exact match, so grab it.
-			stmp := &scanner{}
-			val, _, err := nextValue(data[offset:], stmp)
+			stmp := newScanner(data)
+			stmp.offset = scan.offset
+			val, _, err := nextValue(data, stmp)
 			if err != nil {
 				return m, err
 			}

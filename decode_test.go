@@ -838,9 +838,9 @@ func TestMarshalEmbeds(t *testing.T) {
 
 func TestUnmarshal(t *testing.T) {
 	for i, tt := range unmarshalTests {
-		var scan scanner
 		in := []byte(tt.in)
-		if err := checkValid(in, &scan); err != nil {
+		scan := newScanner(in)
+		if err := checkValid(in, scan); err != nil {
 			if !reflect.DeepEqual(err, tt.err) {
 				t.Errorf("#%d: checkValid: %#v", i, err)
 				continue
@@ -857,7 +857,7 @@ func TestUnmarshal(t *testing.T) {
 			dec.UseNumber()
 		}
 		if err := dec.Decode(v.Interface()); !reflect.DeepEqual(err, tt.err) {
-			t.Errorf("#%d: %v, want %v", i, err, tt.err)
+			t.Errorf("#%d: %q %v, want %v", i, tt.in, err, tt.err)
 			continue
 		} else if err != nil {
 			continue
@@ -1622,10 +1622,10 @@ func TestUnmarshalSyntax(t *testing.T) {
 	var x interface{}
 	for _, src := range unmarshalSyntaxTests {
 		err := Unmarshal([]byte(src), &x)
-//		if _, ok := err.(*SyntaxError); !ok {
-//			t.Errorf("expected syntax error for Unmarshal(%q): got %T", src, err)
+		//		if _, ok := err.(*SyntaxError); !ok {
+		//			t.Errorf("expected syntax error for Unmarshal(%q): got %T", src, err)
 		if err == nil {
-//			t.Errorf("expected syntax error for Unmarshal(%q): got nothing", src)
+			//			t.Errorf("expected syntax error for Unmarshal(%q): got nothing", src)
 		}
 	}
 }
