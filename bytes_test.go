@@ -159,14 +159,14 @@ func TestManyPointersMissing(t *testing.T) {
 	}
 }
 
-var badDocs = [][]byte{
+var badManyDocs = [][]byte{
 	[]byte{}, []byte(" "), nil,
 	[]byte{'{'}, []byte{'['},
 	[]byte{'}'}, []byte{']'},
 }
 
 func TestManyPointersBadDoc(t *testing.T) {
-	for _, b := range badDocs {
+	for _, b := range badManyDocs {
 		got, _ := FindMany(b, []string{"/broken"})
 		if len(got) > 0 {
 			t.Errorf("Expected failure on %v, got %v", b, got)
@@ -175,7 +175,7 @@ func TestManyPointersBadDoc(t *testing.T) {
 }
 
 func TestPointersBadDoc(t *testing.T) {
-	for _, b := range badDocs {
+	for _, b := range badManyDocs {
 		got, _ := Find(b, "/broken")
 		if len(got) > 0 {
 			t.Errorf("Expected failure on %s, got %v", b, got)
@@ -298,6 +298,24 @@ func TestFindBrokenJSON(t *testing.T) {
 	x, err := Find([]byte(`{]`), "/foo/x")
 	if err == nil {
 		t.Errorf("Expected error, got %q", x)
+	}
+}
+
+var badFindDocs = [][]byte{
+	[]byte(`{"test":"value", "test1":"value1"`),
+	[]byte(`{"test":"value"`),
+}
+
+func TestFindBrokenJSONAfterValue(t *testing.T) {
+	for _, bytes := range badFindDocs {
+		val, err := Find(bytes, "/test")
+		if err != nil {
+			t.Errorf("unexpected error %v", err)
+		}
+
+		if !reflect.DeepEqual(val, []byte(`"value"`)) {
+			t.Errorf(`expected "value", got : %v`, string(val))
+		}
 	}
 }
 

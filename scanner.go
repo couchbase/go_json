@@ -68,7 +68,7 @@ func nextValue(data []byte, scan *scanner) (value, rest []byte, err error) {
 	if scan.eof() == scanError {
 		return nil, nil, scan.err
 	}
-	return data, nil, nil
+	return data[start:], nil, nil
 }
 
 // A SyntaxError is a description of a JSON syntax error.
