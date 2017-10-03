@@ -102,7 +102,6 @@ Input:
 			i := dec.scan.offset
 			c := dec.scan.data[i]
 			dec.scan.offset++
-			dec.scan.bytes++
 			v := dec.scan.step(dec.scan, c)
 			if v == scanEnd {
 				start = i

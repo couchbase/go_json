@@ -21,7 +21,6 @@ func checkValid(data []byte, scan *scanner) error {
 	scan.reset()
 	for scan.offset < len(scan.data) {
 		c := scan.data[scan.offset]
-		scan.bytes++
 		scan.offset++
 		if scan.step(scan, c) == scanError {
 			return scan.err
@@ -114,9 +113,6 @@ type scanner struct {
 	redo      bool
 	redoCode  int
 	redoState func(*scanner, byte) int
-
-	// total bytes consumed, updated by decoder.Decode
-	bytes int64
 }
 
 // These values are returned by the state transition functions
@@ -183,7 +179,7 @@ func (s *scanner) eof() int {
 		return scanEnd
 	}
 	if s.err == nil {
-		s.err = &SyntaxError{"unexpected end of JSON input", s.bytes}
+		s.err = &SyntaxError{"unexpected end of JSON input", int64(s.offset)}
 	}
 	return scanError
 }
@@ -226,7 +222,6 @@ func (s *scanner) skipSpaces(c byte) bool {
 			c = s.data[s.offset]
 			if isSpace(c) {
 				s.offset++
-				s.bytes++
 			} else {
 				break
 			}
@@ -391,7 +386,6 @@ func stateInString(s *scanner, c byte) int {
 		}
 		c = s.data[s.offset]
 		s.offset++
-		s.bytes++
 	}
 	return scanContinue
 }
@@ -637,7 +631,7 @@ func stateError(s *scanner, c byte) int {
 // error records an error and switches to the error state.
 func (s *scanner) error(c byte, context string) int {
 	s.step = stateError
-	s.err = &SyntaxError{"invalid character " + quoteChar(c) + " " + context, s.bytes}
+	s.err = &SyntaxError{"invalid character " + quoteChar(c) + " " + context, int64(s.offset)}
 	return scanError
 }
 

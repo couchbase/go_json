@@ -14,37 +14,46 @@ func Compact(dst *bytes.Buffer, src []byte) error {
 
 func compact(dst *bytes.Buffer, src []byte, escape bool) error {
 	origLen := dst.Len()
-	var scan scanner
+	scan := newScanner(src)
 	scan.reset()
-	start := 0
-	for i, c := range src {
+
+	start := scan.offset
+	l := len(src)
+	for {
+		if scan.offset >= l {
+			break
+		}
+		c := scan.data[scan.offset]
+		oldOffset := scan.offset
+		scan.offset++
 		if escape && (c == '<' || c == '>' || c == '&') {
-			if start < i {
-				dst.Write(src[start:i])
+			if start < oldOffset {
+				dst.Write(src[start:oldOffset])
 			}
 			dst.WriteString(`\u00`)
 			dst.WriteByte(hex[c>>4])
 			dst.WriteByte(hex[c&0xF])
-			start = i + 1
+			start = scan.offset
+			continue
 		}
 		// Convert U+2028 and U+2029 (E2 80 A8 and E2 80 A9).
-		if c == 0xE2 && i+2 < len(src) && src[i+1] == 0x80 && src[i+2]&^1 == 0xA8 {
-			if start < i {
-				dst.Write(src[start:i])
+		if c == 0xE2 && oldOffset+2 < len(src) && src[oldOffset+1] == 0x80 && src[oldOffset+2]&^1 == 0xA8 {
+			if start < oldOffset {
+				dst.Write(src[start:oldOffset])
 			}
 			dst.WriteString(`\u202`)
-			dst.WriteByte(hex[src[i+2]&0xF])
-			start = i + 3
+			dst.WriteByte(hex[src[oldOffset+2]&0xF])
+			start = oldOffset + 3
 		}
-		v := scan.step(&scan, c)
+		v := scan.step(scan, c)
 		if v >= scanSkipSpace {
 			if v == scanError {
 				break
 			}
-			if start < i {
-				dst.Write(src[start:i])
+			if start < oldOffset {
+				dst.Write(src[start:oldOffset])
 			}
-			start = i + 1
+			start = scan.offset
 		}
 	}
 	if scan.eof() == scanError {
@@ -78,13 +87,20 @@ func newline(dst *bytes.Buffer, prefix, indent string, depth int) {
 // if src ends in a trailing newline, so will dst.
 func Indent(dst *bytes.Buffer, src []byte, prefix, indent string) error {
 	origLen := dst.Len()
-	var scan scanner
+	scan := newScanner(src)
 	scan.reset()
 	needIndent := false
 	depth := 0
-	for _, c := range src {
-		scan.bytes++
-		v := scan.step(&scan, c)
+
+	l := len(src)
+	for {
+		if scan.offset >= l {
+			break
+		}
+		c := scan.data[scan.offset]
+		oldOffset := scan.offset
+		scan.offset++
+		v := scan.step(scan, c)
 		if v == scanSkipSpace {
 			continue
 		}
@@ -100,7 +116,7 @@ func Indent(dst *bytes.Buffer, src []byte, prefix, indent string) error {
 		// Emit semantically uninteresting bytes
 		// (in particular, punctuation in strings) unmodified.
 		if v == scanContinue {
-			dst.WriteByte(c)
+			dst.Write(scan.data[oldOffset:scan.offset])
 			continue
 		}
 
