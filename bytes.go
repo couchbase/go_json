@@ -7,6 +7,12 @@ import (
 	"strings"
 )
 
+type FindState struct {
+	found map[string]int
+	level int
+	scan  *scanner
+}
+
 func arreq(a, b []string) bool {
 	if len(a) == len(b) {
 		for i := range a {
@@ -149,6 +155,8 @@ func Find(data []byte, path string) ([]byte, error) {
 		case scanBeginObject:
 			current = append(current, "")
 		case scanContinue, scanSkipSpace, scanObjectValue, scanEnd:
+		case scanError:
+			return nil, scan.err
 		default:
 			return nil, fmt.Errorf("found unhandled json op: %v", newOp)
 		}
@@ -165,6 +173,124 @@ func Find(data []byte, path string) ([]byte, error) {
 			}
 			val, _, err := nextValue(data, scan)
 			return val, err
+		}
+	}
+
+	return nil, nil
+}
+
+// Find a first level field
+func FirstFind(data []byte, field string) ([]byte, error) {
+	if field == "" {
+		return data, nil
+	}
+
+	scan := newScanner(data)
+	scan.reset()
+	beganLiteral := 0
+	level := 0
+
+	for scan.offset < len(scan.data) {
+		oldOffset := scan.offset
+		c := data[oldOffset]
+		scan.offset++
+		newOp := scan.step(scan, c)
+
+		switch newOp {
+		case scanBeginArray:
+			level++
+		case scanObjectKey:
+			if level == 1 {
+				current := grokLiteral(data[beganLiteral-1 : oldOffset])
+				if current == field {
+					val, _, err := nextValue(data, scan)
+					return val, err
+				}
+			}
+		case scanBeginLiteral:
+			beganLiteral = scan.offset
+		case scanArrayValue:
+		case scanEndArray, scanEndObject:
+			level--
+		case scanBeginObject:
+			level++
+		case scanContinue, scanSkipSpace, scanObjectValue, scanEnd:
+		case scanError:
+			return nil, scan.err
+		default:
+			return nil, fmt.Errorf("found unhandled json op: %v", newOp)
+		}
+	}
+
+	return nil, nil
+}
+
+// initialize a FindState
+func NewFindState(data []byte) *FindState {
+	rv := &FindState{
+		found: make(map[string]int, 32),
+		scan:  newScanner(data),
+	}
+	rv.scan.reset()
+	return rv
+}
+
+// Find a first level field, maintaining a state for later reuse
+func FirstFindWithState(state *FindState, field string) ([]byte, error) {
+	if state == nil {
+		return nil, fmt.Errorf("FindState is uninitialized")
+	}
+
+	if field == "" {
+		return state.scan.data, nil
+	}
+
+	found, ok := state.found[field]
+	if ok {
+		scan := newScanner(state.scan.data)
+		scan.reset()
+		scan.offset = found
+		val, _, err := nextValue(scan.data, scan)
+		return val, err
+	}
+
+	beganLiteral := 0
+	level := state.level
+
+	for state.scan.offset < len(state.scan.data) {
+		oldOffset := state.scan.offset
+		c := state.scan.data[oldOffset]
+		state.scan.offset++
+		newOp := state.scan.step(state.scan, c)
+
+		switch newOp {
+		case scanBeginArray:
+			level++
+		case scanObjectKey:
+			if level == 1 {
+				current := grokLiteral(state.scan.data[beganLiteral-1 : oldOffset])
+				state.found[current] = state.scan.offset
+				if current == field {
+					scan := newScanner(state.scan.data)
+					scan.reset()
+					scan.offset = state.scan.offset
+					state.level = level
+					val, _, err := nextValue(state.scan.data, scan)
+					return val, err
+				}
+			}
+		case scanBeginLiteral:
+			beganLiteral = state.scan.offset
+		case scanArrayValue:
+		case scanEndArray, scanEndObject:
+			level--
+		case scanBeginObject:
+			level++
+		case scanContinue, scanSkipSpace, scanObjectValue, scanEnd:
+		case scanError:
+			return nil, state.scan.err
+		default:
+			return nil, fmt.Errorf("found unhandled json op: %v", newOp)
 		}
 	}
 

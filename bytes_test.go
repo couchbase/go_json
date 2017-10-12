@@ -75,6 +75,122 @@ func TestListPointers(t *testing.T) {
 	}
 }
 
+func TestFirstFind(t *testing.T) {
+	doc := []byte("{ \"f1\": 1, \"f2\": 2, \"f3\": 3 }")
+	fields1 := []string{"f1", "f2", "f3"}
+
+	res, err := FirstFind([]byte("[ null ]"), "null")
+	if err != nil {
+		t.Fatalf("field null got %v", err)
+	}
+	if res != nil {
+		t.Fatal("mixing null field and null value")
+	}
+
+	res, err = FirstFind([]byte("[ \"a\" ]"), "a")
+	if err != nil {
+		t.Fatalf("field null got %v", err)
+	}
+	if res != nil {
+		t.Fatal("looked for field, found string")
+	}
+
+	for _, field := range fields1 {
+		res, err := FirstFind(doc, field)
+		if err != nil {
+			t.Fatalf("field %q got %v", field, err)
+		}
+
+		gotField := "f" + strings.TrimSpace(string(res))
+		if gotField != field {
+			t.Fatalf("expected %q found %q", field, gotField)
+		}
+	}
+	field := "f4"
+
+	res, err = FirstFind(doc, field)
+	if err != nil {
+		t.Fatalf("field %q got %v", field, err)
+	}
+	if res != nil {
+		t.Fatalf("field %q expected nothing found %q", field, string(res))
+	}
+}
+
+func TestFirstFindWithState(t *testing.T) {
+	doc := []byte("{ \"f1\": 1, \"f2\": 2, \"f3\": 3 }")
+	fields1 := []string{"f1", "f2", "f3"}
+
+	state := NewFindState([]byte("[ null ]"))
+	res, err := FirstFindWithState(state, "null")
+	if err != nil {
+		t.Fatalf("field null got %v", err)
+	}
+	if res != nil {
+		t.Fatal("mixing null field and null value")
+	}
+
+	state = NewFindState([]byte("[ \"a\" ]"))
+	res, err = FirstFindWithState(state, "a")
+	if err != nil {
+		t.Fatalf("field null got %v", err)
+	}
+	if res != nil {
+		t.Fatal("looked for field, found string")
+	}
+
+	// scan forward
+	state = NewFindState(doc)
+	for _, field := range fields1 {
+		res, err := FirstFindWithState(state, field)
+		if err != nil {
+			t.Fatal("field %q got %q", field, err)
+		}
+
+		gotField := "f" + strings.TrimSpace(string(res))
+		if gotField != field {
+			t.Fatal("expected %q found %q", field, gotField)
+		}
+	}
+	field := "f4"
+
+	res, err = FirstFindWithState(state, field)
+	if err != nil {
+		t.Fatal("field %q got %q", field, err)
+	}
+
+	if string(res) != "" {
+		t.Fatal("field %q expected nothing found %q", field, string(res))
+	}
+
+	// scan backwards
+	state = NewFindState(doc)
+	res, err = FirstFindWithState(state, field)
+	if err != nil {
+		t.Fatal("field %q got %q", field, err)
+	}
+
+	if string(res) != "" {
+		t.Fatal("field %q expected nothing found %q", field, string(res))
+	}
+
+	offset := state.scan.offset
+	for _, field = range fields1 {
+		res, err := FirstFindWithState(state, field)
+		if err != nil {
+			t.Fatal("field %q got %q", field, err)
+		}
+
+		gotField := "f" + strings.TrimSpace(string(res))
+		if gotField != field {
+			t.Fatal("expected %q found %q", field, gotField)
+		}
+		if offset != state.scan.offset {
+			t.Fatal("field %q was not cached", field)
+		}
+	}
+}
+
 func TestPointerRoot(t *testing.T) {
 	got, err := Find([]byte(objSrc), "")
 	if err != nil {
