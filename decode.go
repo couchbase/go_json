@@ -1255,22 +1255,11 @@ func unquoteBytes(s []byte) (t []byte, ok bool) {
 				w++
 			case 'u':
 				r--
-				rr := getu4(s[r:])
+				rr, sz := getu4OrSurrogate(s, r)
 				if rr < 0 {
 					return
 				}
-				r += 6
-				if utf16.IsSurrogate(rr) {
-					rr1 := getu4(s[r:])
-					if dec := utf16.DecodeRune(rr, rr1); dec != unicode.ReplacementChar {
-						// A valid pair; consume.
-						r += 6
-						w += utf8.EncodeRune(b[w:], dec)
-						break
-					}
-					// Invalid surrogate; fall back to replacement rune.
-					rr = unicode.ReplacementChar
-				}
+				r += sz
 				w += utf8.EncodeRune(b[w:], rr)
 			}
 
@@ -1292,4 +1281,27 @@ func unquoteBytes(s []byte) (t []byte, ok bool) {
 		}
 	}
 	return b[0:w], true
+}
+
+func getu4OrSurrogate(s []byte, r int) (rune, int) {
+	sz := 0
+	rr := getu4(s[r:])
+	if rr < 0 {
+		return -1, 0
+	}
+	sz += 6
+	r += 6
+	if utf16.IsSurrogate(rr) {
+		rr1 := getu4(s[r:])
+		if dec := utf16.DecodeRune(rr, rr1); dec != unicode.ReplacementChar {
+
+			// A valid pair; consume.
+			sz += 6
+			return dec, sz
+		}
+
+		// Invalid surrogate; fall back to replacement rune.
+		rr = unicode.ReplacementChar
+	}
+	return rr, sz
 }

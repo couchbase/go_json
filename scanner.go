@@ -13,7 +13,11 @@ package json
 // This file starts with two simple examples using the scanner
 // before diving into the scanner itself.
 
-import "strconv"
+import (
+	"fmt"
+	"strconv"
+	"unicode/utf8"
+)
 
 // checkValid verifies that data is valid JSON-encoded data.
 // scan is passed in for use by checkValid to avoid an allocation.
@@ -35,6 +39,86 @@ func checkValid(data []byte, scan *scanner) error {
 // Validate some alleged JSON.  Return nil iff the JSON is valid.
 func Validate(data []byte) error {
 	return checkValid(data, newScanner(data))
+}
+
+// nextLiteral scans the data and grabs the next literal, in one pass
+func nextLiteral(scan *scanner) ([]byte, error) {
+	l := len(scan.data)
+	out := 0
+	literal := make([]byte, l-scan.offset)
+
+	for {
+		if scan.offset >= l {
+			return nil, &SyntaxError{"unexpected end of JSON input", int64(scan.offset)}
+		}
+		oldOffset := scan.offset
+		c := scan.data[oldOffset]
+		scan.offset++
+
+		// found the other side
+		if c == '"' {
+			scan.step = stateEndValue
+			return literal[0:out], nil
+		}
+
+		// no control characters
+		if c < 0x20 {
+			_ = scan.error(c, "in string literal")
+			return nil, scan.err
+		}
+
+		// escape
+		if c == '\\' {
+			oldOffset := scan.offset
+			c := scan.data[oldOffset]
+			scan.offset++
+			switch c {
+			case '"', '\\', '/', '\'':
+				literal[out] = c
+			case 'b':
+				literal[out] = '\b'
+			case 'f':
+				literal[out] = '\f'
+			case 'n':
+				literal[out] = '\n'
+			case 'r':
+				literal[out] = '\r'
+			case 't':
+				literal[out] = '\t'
+			case 'u':
+				oldOffset--
+				rr, size := getu4OrSurrogate(scan.data, oldOffset)
+				if rr < 0 {
+					_ = scan.error(c, "invalid unicode sequence")
+					fmt.Printf("error %q %q\n", scan.data, scan.err)
+					return nil, scan.err
+				}
+				scan.offset = oldOffset + size
+				out += utf8.EncodeRune(literal[out:], rr)
+				continue
+			default:
+				_ = scan.error(c, "invalid escaped character")
+				return nil, scan.err
+			}
+			out++
+
+			// ascii
+		} else if c < utf8.RuneSelf {
+			literal[out] = c
+			out++
+
+			// UTFs
+		} else {
+			rr, size := utf8.DecodeRune(scan.data[oldOffset:])
+			scan.offset = oldOffset + size
+			out += utf8.EncodeRune(literal[out:], rr)
+		}
+	}
+
+	// we should never get here
+	_ = scan.error(' ', "unxepected state")
+	return nil, scan.err
+
 }
 
 // nextValue splits data after the next whole JSON value,
@@ -68,6 +152,44 @@ func nextValue(data []byte, scan *scanner) (value, rest []byte, err error) {
 		return nil, nil, scan.err
 	}
 	return data[start:], nil, nil
+}
+
+// nextScanValue behaves like nextValue, but preserves the scan, so as to be
+// useful in single scan environments
+// it does not need a data argument, and will not return rest
+func nextScanValue(baseScan *scanner) ([]byte, error) {
+	scan := newScanner(baseScan.data)
+	scan.reset()
+	scan.offset = baseScan.offset
+	start := scan.offset
+	for scan.offset < len(scan.data) {
+		i := scan.offset
+		c := scan.data[i]
+		scan.offset++
+		v := scan.step(scan, c)
+		if v >= scanEndObject {
+			switch v {
+			case scanEndObject, scanEndArray:
+
+				// since we are looking for a value within a scan, here we do not expect
+				// the scan to end, and there will be something after the value
+				// the next scan step therefore is stateEndValue
+				if scan.step(scan, ' ') == scanEnd {
+					baseScan.step = stateEndValue
+					baseScan.offset = scan.offset
+					return scan.data[start : i+1], nil
+				}
+			case scanError:
+				return nil, scan.err
+			case scanEnd:
+				return scan.data[start:i], nil
+			}
+		}
+	}
+	if scan.eof() == scanError {
+		return nil, scan.err
+	}
+	return scan.data[start:], nil
 }
 
 // A SyntaxError is a description of a JSON syntax error.

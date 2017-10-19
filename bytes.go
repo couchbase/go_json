@@ -8,7 +8,7 @@ import (
 )
 
 type FindState struct {
-	found map[string]int
+	found map[string][]byte
 	level int
 	scan  *scanner
 }
@@ -122,6 +122,8 @@ func FindDecode(data []byte, path string, into interface{}) error {
 
 // Find a section of raw JSON by specifying a JSONPointer.
 func Find(data []byte, path string) ([]byte, error) {
+	var lastLiteral string
+
 	if path == "" {
 		return data, nil
 	}
@@ -131,8 +133,8 @@ func Find(data []byte, path string) ([]byte, error) {
 	scan := newScanner(data)
 	scan.reset()
 
-	beganLiteral := 0
 	current := make([]string, 0, 32)
+	level := -1
 	for scan.offset < len(scan.data) {
 
 		oldOffset := scan.offset
@@ -142,17 +144,26 @@ func Find(data []byte, path string) ([]byte, error) {
 
 		switch newOp {
 		case scanBeginArray:
+			level++
 			current = append(current, "0")
 		case scanObjectKey:
-			current[len(current)-1] = grokLiteral(data[beganLiteral-1 : oldOffset])
+			current[len(current)-1] = lastLiteral
 		case scanBeginLiteral:
-			beganLiteral = scan.offset
+			if level >= 0 && scan.parseState[level] == parseObjectKey {
+				literal, err := nextLiteral(scan)
+				if err != nil {
+					return nil, err
+				}
+				lastLiteral = string(literal)
+			}
 		case scanArrayValue:
 			n := mustParseInt(current[len(current)-1])
 			current[len(current)-1] = strconv.Itoa(n + 1)
 		case scanEndArray, scanEndObject:
 			current = sliceToEnd(current)
+			level--
 		case scanBeginObject:
+			level++
 			current = append(current, "")
 		case scanContinue, scanSkipSpace, scanObjectValue, scanEnd:
 		case scanError:
@@ -171,8 +182,7 @@ func Find(data []byte, path string) ([]byte, error) {
 				// special case an array offset miss
 				return nil, nil
 			}
-			val, _, err := nextValue(data, scan)
-			return val, err
+			return nextScanValue(scan)
 		}
 	}
 
@@ -181,16 +191,18 @@ func Find(data []byte, path string) ([]byte, error) {
 
 // Find a first level field
 func FirstFind(data []byte, field string) ([]byte, error) {
+	var current string
+
 	if field == "" {
 		return data, nil
 	}
 
 	scan := newScanner(data)
 	scan.reset()
-	beganLiteral := 0
 	level := 0
 
 	for scan.offset < len(scan.data) {
+
 		oldOffset := scan.offset
 		c := data[oldOffset]
 		scan.offset++
@@ -201,14 +213,18 @@ func FirstFind(data []byte, field string) ([]byte, error) {
 			level++
 		case scanObjectKey:
 			if level == 1 {
-				current := grokLiteral(data[beganLiteral-1 : oldOffset])
 				if current == field {
-					val, _, err := nextValue(data, scan)
-					return val, err
+					return nextScanValue(scan)
 				}
 			}
 		case scanBeginLiteral:
-			beganLiteral = scan.offset
+			if level == 1 && scan.parseState[0] == parseObjectKey {
+				literal, err := nextLiteral(scan)
+				if err != nil {
+					return nil, err
+				}
+				current = string(literal)
+			}
 		case scanArrayValue:
 		case scanEndArray, scanEndObject:
 			level--
@@ -228,7 +244,7 @@ func FirstFind(data []byte, field string) ([]byte, error) {
 // initialize a FindState
 func NewFindState(data []byte) *FindState {
 	rv := &FindState{
-		found: make(map[string]int, 32),
+		found: make(map[string][]byte, 32),
 		scan:  newScanner(data),
 	}
 	rv.scan.reset()
@@ -237,6 +253,8 @@ func NewFindState(data []byte) *FindState {
 
 // Find a first level field, maintaining a state for later reuse
 func FirstFindWithState(state *FindState, field string) ([]byte, error) {
+	var current string
+
 	if state == nil {
 		return nil, fmt.Errorf("FindState is uninitialized")
 	}
@@ -247,17 +265,12 @@ func FirstFindWithState(state *FindState, field string) ([]byte, error) {
 
 	found, ok := state.found[field]
 	if ok {
-		scan := newScanner(state.scan.data)
-		scan.reset()
-		scan.offset = found
-		val, _, err := nextValue(scan.data, scan)
-		return val, err
+		return found, nil
 	}
 
-	beganLiteral := 0
 	level := state.level
-
 	for state.scan.offset < len(state.scan.data) {
+
 		oldOffset := state.scan.offset
 		c := state.scan.data[oldOffset]
 		state.scan.offset++
@@ -268,19 +281,24 @@ func FirstFindWithState(state *FindState, field string) ([]byte, error) {
 			level++
 		case scanObjectKey:
 			if level == 1 {
-				current := grokLiteral(state.scan.data[beganLiteral-1 : oldOffset])
-				state.found[current] = state.scan.offset
+				val, err := nextScanValue(state.scan)
+				if err != nil {
+					return nil, err
+				}
+				state.found[current] = val
 				if current == field {
-					scan := newScanner(state.scan.data)
-					scan.reset()
-					scan.offset = state.scan.offset
 					state.level = level
-					val, _, err := nextValue(state.scan.data, scan)
-					return val, err
+					return val, nil
 				}
 			}
 		case scanBeginLiteral:
-			beganLiteral = state.scan.offset
+			if level == 1 && state.scan.parseState[0] == parseObjectKey {
+				literal, err := nextLiteral(state.scan)
+				if err != nil {
+					return nil, err
+				}
+				current = string(literal)
+			}
 		case scanArrayValue:
 		case scanEndArray, scanEndObject:
 			level--
