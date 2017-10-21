@@ -7,10 +7,13 @@ import (
 	"strings"
 )
 
+const fieldLiteralSize int = 64
+
 type FindState struct {
-	found map[string][]byte
-	level int
-	scan  *scanner
+	found   map[string][]byte
+	level   int
+	scan    *scanner
+	literal []byte
 }
 
 func arreq(a, b []string) bool {
@@ -134,6 +137,7 @@ func Find(data []byte, path string) ([]byte, error) {
 	scan.reset()
 
 	current := make([]string, 0, 32)
+	literal := make([]byte, fieldLiteralSize)
 	level := -1
 	for scan.offset < len(scan.data) {
 
@@ -150,11 +154,11 @@ func Find(data []byte, path string) ([]byte, error) {
 			current[len(current)-1] = lastLiteral
 		case scanBeginLiteral:
 			if level >= 0 && scan.parseState[level] == parseObjectKey {
-				literal, err := nextLiteral(scan)
+				res, err := nextLiteral(literal, scan)
 				if err != nil {
 					return nil, err
 				}
-				lastLiteral = string(literal)
+				lastLiteral = string(res)
 			}
 		case scanArrayValue:
 			n := mustParseInt(current[len(current)-1])
@@ -201,6 +205,7 @@ func FirstFind(data []byte, field string) ([]byte, error) {
 	scan.reset()
 	level := 0
 
+	literal := make([]byte, fieldLiteralSize)
 	for scan.offset < len(scan.data) {
 
 		oldOffset := scan.offset
@@ -219,11 +224,11 @@ func FirstFind(data []byte, field string) ([]byte, error) {
 			}
 		case scanBeginLiteral:
 			if level == 1 && scan.parseState[0] == parseObjectKey {
-				literal, err := nextLiteral(scan)
+				res, err := nextLiteral(literal, scan)
 				if err != nil {
 					return nil, err
 				}
-				current = string(literal)
+				current = string(res)
 			}
 		case scanArrayValue:
 		case scanEndArray, scanEndObject:
@@ -244,8 +249,9 @@ func FirstFind(data []byte, field string) ([]byte, error) {
 // initialize a FindState
 func NewFindState(data []byte) *FindState {
 	rv := &FindState{
-		found: make(map[string][]byte, 32),
-		scan:  newScanner(data),
+		found:   make(map[string][]byte, 32),
+		scan:    newScanner(data),
+		literal: make([]byte, fieldLiteralSize),
 	}
 	rv.scan.reset()
 	return rv
@@ -293,11 +299,13 @@ func FirstFindWithState(state *FindState, field string) ([]byte, error) {
 			}
 		case scanBeginLiteral:
 			if level == 1 && state.scan.parseState[0] == parseObjectKey {
-				literal, err := nextLiteral(state.scan)
+				var err error
+
+				res, err := nextLiteral(state.literal, state.scan)
 				if err != nil {
 					return nil, err
 				}
-				current = string(literal)
+				current = string(res)
 			}
 		case scanArrayValue:
 		case scanEndArray, scanEndObject:

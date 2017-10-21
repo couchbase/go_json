@@ -14,7 +14,6 @@ package json
 // before diving into the scanner itself.
 
 import (
-	"fmt"
 	"strconv"
 	"unicode/utf8"
 )
@@ -42,23 +41,24 @@ func Validate(data []byte) error {
 }
 
 // nextLiteral scans the data and grabs the next literal, in one pass
-func nextLiteral(scan *scanner) ([]byte, error) {
+func nextLiteral(literal []byte, scan *scanner) ([]byte, error) {
 	l := len(scan.data)
+
+	// always leave 8 bytes for UTF16 characters
+	usableCap := cap(literal) - 8
 	out := 0
-	literal := make([]byte, l-scan.offset)
 
 	for {
 		if scan.offset >= l {
 			return nil, &SyntaxError{"unexpected end of JSON input", int64(scan.offset)}
 		}
-		oldOffset := scan.offset
-		c := scan.data[oldOffset]
-		scan.offset++
+		c := scan.data[scan.offset]
 
 		// found the other side
 		if c == '"' {
 			scan.step = stateEndValue
-			return literal[0:out], nil
+			scan.offset++
+			return literal[:out], nil
 		}
 
 		// no control characters
@@ -67,10 +67,19 @@ func nextLiteral(scan *scanner) ([]byte, error) {
 			return nil, scan.err
 		}
 
+		// make more space
+		if out >= usableCap {
+			newCap := (usableCap + 8) * 2
+			newLiteral := make([]byte, newCap)
+			copy(newLiteral, literal[:out])
+			literal = newLiteral
+			usableCap = newCap - 8
+		}
+
 		// escape
 		if c == '\\' {
-			oldOffset := scan.offset
-			c := scan.data[oldOffset]
+			scan.offset++
+			c := scan.data[scan.offset]
 			scan.offset++
 			switch c {
 			case '"', '\\', '/', '\'':
@@ -86,11 +95,10 @@ func nextLiteral(scan *scanner) ([]byte, error) {
 			case 't':
 				literal[out] = '\t'
 			case 'u':
-				oldOffset--
+				oldOffset := scan.offset - 2
 				rr, size := getu4OrSurrogate(scan.data, oldOffset)
 				if rr < 0 {
 					_ = scan.error(c, "invalid unicode sequence")
-					fmt.Printf("error %q %q\n", scan.data, scan.err)
 					return nil, scan.err
 				}
 				scan.offset = oldOffset + size
@@ -106,11 +114,12 @@ func nextLiteral(scan *scanner) ([]byte, error) {
 		} else if c < utf8.RuneSelf {
 			literal[out] = c
 			out++
+			scan.offset++
 
 			// UTFs
 		} else {
-			rr, size := utf8.DecodeRune(scan.data[oldOffset:])
-			scan.offset = oldOffset + size
+			rr, size := utf8.DecodeRune(scan.data[scan.offset:])
+			scan.offset += size
 			out += utf8.EncodeRune(literal[out:], rr)
 		}
 	}

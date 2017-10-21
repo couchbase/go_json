@@ -75,7 +75,7 @@ func TestListPointers(t *testing.T) {
 	}
 }
 
-var firstDoc = []byte("{ \"f1\": \"1\", \"f2\": 2, \"f3\": { \"a\": 3 }, \"f4\": [ 4 ], \"f5\": 5  }")
+var firstDoc = []byte("{ \"f1\": \"1\", \"f2\": 2, \"f3\": { \"a\": 3 }, \"f4\": [ 4 ], \"f1234567890123456789012345678901234567890\": 33, \"f5\": 5 }")
 var firstTests = []struct {
 	field string
 	res   string
