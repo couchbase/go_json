@@ -41,13 +41,46 @@ func Validate(data []byte) error {
 }
 
 // nextLiteral scans the data and grabs the next literal, in one pass
-func nextLiteral(literal []byte, scan *scanner) ([]byte, error) {
+func nextLiteral(scan *scanner) ([]byte, error) {
 	l := len(scan.data)
 
-	// always leave 8 bytes for UTF16 characters
-	usableCap := cap(literal) - 8
-	out := 0
+	// first try and see if we can pass the literal straight from our slice
+	start := scan.offset
+	for {
+		if scan.offset >= l {
+			return nil, &SyntaxError{"unexpected end of JSON input", int64(scan.offset)}
+		}
+		c := scan.data[scan.offset]
 
+		// found the other side
+		if c == '"' {
+			scan.step = stateEndValue
+			oldOffset := scan.offset
+			scan.offset++
+			return scan.data[start:oldOffset], nil
+		}
+
+		// no control characters
+		if c < 0x20 {
+			_ = scan.error(c, "in string literal")
+			return nil, scan.err
+		}
+		if c == '\\' || c >= utf8.RuneSelf {
+			break
+		}
+		scan.offset++
+	}
+
+	usableCap := (scan.offset - start) * 2
+	if usableCap < 64 {
+		usableCap = 64
+	}
+	literal := make([]byte, usableCap)
+	copy(literal, scan.data[start:scan.offset])
+	out := scan.offset - start
+
+	// we always leave 8 bytes for a possible utf16
+	usableCap -= 8
 	for {
 		if scan.offset >= l {
 			return nil, &SyntaxError{"unexpected end of JSON input", int64(scan.offset)}

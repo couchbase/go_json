@@ -7,13 +7,10 @@ import (
 	"strings"
 )
 
-const fieldLiteralSize int = 64
-
 type FindState struct {
-	found   map[string][]byte
-	level   int
-	scan    *scanner
-	literal []byte
+	found map[string][]byte
+	level int
+	scan  *scanner
 }
 
 func arreq(a, b []string) bool {
@@ -137,7 +134,6 @@ func Find(data []byte, path string) ([]byte, error) {
 	scan.reset()
 
 	current := make([]string, 0, 32)
-	literal := make([]byte, fieldLiteralSize)
 	level := -1
 	for scan.offset < len(scan.data) {
 
@@ -154,7 +150,7 @@ func Find(data []byte, path string) ([]byte, error) {
 			current[len(current)-1] = lastLiteral
 		case scanBeginLiteral:
 			if level >= 0 && scan.parseState[level] == parseObjectKey {
-				res, err := nextLiteral(literal, scan)
+				res, err := nextLiteral(scan)
 				if err != nil {
 					return nil, err
 				}
@@ -205,7 +201,6 @@ func FirstFind(data []byte, field string) ([]byte, error) {
 	scan.reset()
 	level := 0
 
-	literal := make([]byte, fieldLiteralSize)
 	for scan.offset < len(scan.data) {
 
 		oldOffset := scan.offset
@@ -224,7 +219,7 @@ func FirstFind(data []byte, field string) ([]byte, error) {
 			}
 		case scanBeginLiteral:
 			if level == 1 && scan.parseState[0] == parseObjectKey {
-				res, err := nextLiteral(literal, scan)
+				res, err := nextLiteral(scan)
 				if err != nil {
 					return nil, err
 				}
@@ -249,9 +244,8 @@ func FirstFind(data []byte, field string) ([]byte, error) {
 // initialize a FindState
 func NewFindState(data []byte) *FindState {
 	rv := &FindState{
-		found:   make(map[string][]byte, 32),
-		scan:    newScanner(data),
-		literal: make([]byte, fieldLiteralSize),
+		found: make(map[string][]byte, 32),
+		scan:  newScanner(data),
 	}
 	rv.scan.reset()
 	return rv
@@ -301,7 +295,7 @@ func FirstFindWithState(state *FindState, field string) ([]byte, error) {
 			if level == 1 && state.scan.parseState[0] == parseObjectKey {
 				var err error
 
-				res, err := nextLiteral(state.literal, state.scan)
+				res, err := nextLiteral(state.scan)
 				if err != nil {
 					return nil, err
 				}
