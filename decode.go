@@ -1177,20 +1177,29 @@ func unquoteBytes(s []byte) (t []byte, ok bool) {
 	if l < 2 {
 		return
 	}
-	if s[0] == ' ' || s[l-1] == ' ' {
-		s = bytes.TrimSpace(s)
-		l = len(s)
+
+	start := 0
+	end := l - 1
+	for start <= end && s[start] == ' ' {
+		start++
 	}
-	if s[0] != '"' || s[l-1] != '"' {
+	for start <= end && s[end] == ' ' {
+		end--
+	}
+
+	if start >= end {
 		return
 	}
-	s = s[1 : l-1]
+	if s[start] != '"' || s[end] != '"' {
+		return
+	}
+	start++
 
 	// Check for unusual characters. If there are none,
 	// then no unquoting is needed, so return a slice of the
 	// original bytes.
-	r := 0
-	for r < len(s) {
+	r := start
+	for r < end {
 		c := s[r]
 		if c == '\\' || c == '"' || c < ' ' {
 			break
@@ -1205,13 +1214,13 @@ func unquoteBytes(s []byte) (t []byte, ok bool) {
 		}
 		r += size
 	}
-	if r == len(s) {
-		return s, true
+	if r == end {
+		return s[start:end], true
 	}
 
-	b := make([]byte, len(s)+2*utf8.UTFMax)
-	w := copy(b, s[0:r])
-	for r < len(s) {
+	b := make([]byte, l+2*utf8.UTFMax)
+	w := copy(b, s[start:r])
+	for r < end {
 		// Out of room?  Can only happen if s is full of
 		// malformed UTF-8 and we're replacing each
 		// byte with RuneError.
