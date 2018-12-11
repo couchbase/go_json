@@ -206,10 +206,12 @@ func NewEncoder(w io.Writer) *Encoder {
 // See the documentation for Marshal for details about the
 // conversion of Go values to JSON.
 func (enc *Encoder) Encode(v interface{}) error {
+	var eS encodeState
+
+	e := &eS
 	if enc.err != nil {
 		return enc.err
 	}
-	e := newEncodeState()
 	err := e.marshal(v, encOpts{escapeHTML: enc.escapeHTML})
 	if err != nil {
 		return err
@@ -238,7 +240,6 @@ func (enc *Encoder) Encode(v interface{}) error {
 	if _, err = enc.w.Write(b); err != nil {
 		enc.err = err
 	}
-	encodeStatePool.Put(e)
 	return err
 }
 

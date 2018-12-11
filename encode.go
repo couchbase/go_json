@@ -264,17 +264,6 @@ type encodeState struct {
 	scratch      [64]byte
 }
 
-var encodeStatePool sync.Pool
-
-func newEncodeState() *encodeState {
-	if v := encodeStatePool.Get(); v != nil {
-		e := v.(*encodeState)
-		e.Reset()
-		return e
-	}
-	return new(encodeState)
-}
-
 func (e *encodeState) marshal(v interface{}, opts encOpts) (err error) {
 	defer func() {
 		if r := recover(); r != nil {

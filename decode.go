@@ -17,7 +17,6 @@ import (
 	"reflect"
 	"runtime"
 	"strconv"
-	"sync"
 	"unicode"
 	"unicode/utf16"
 	"unicode/utf8"
@@ -1009,37 +1008,14 @@ func (d *decodeState) valueInterface() interface{} {
 
 var _ARRAY_DEFAULT_CAPACITY = 8
 
-func newArrayInterface() interface{} {
+func getArray() []interface{} {
 	return make([]interface{}, 0, _ARRAY_DEFAULT_CAPACITY)
 }
 
-var arrayInterfacePool = &sync.Pool{New: newArrayInterface}
-
-func getArray() []interface{} {
-	return (arrayInterfacePool.Get()).([]interface{})
-}
-
-func RecycleArray(v []interface{}) {
-	arrayInterfacePool.Put(v[0:0])
-}
-
-var objectInterfacePool = &sync.Pool{New: newObjectTemp}
 var _MAP_DEFAULT_CAPACITY = 8
 
-func newObjectTemp() interface{} {
-	return make(map[string]interface{}, _MAP_DEFAULT_CAPACITY)
-}
-
 func getMap() map[string]interface{} {
-	return (objectInterfacePool.Get()).(map[string]interface{})
-}
-
-func RecycleMap(m map[string]interface{}) {
-	for k, _ := range m {
-		m[k] = nil
-		delete(m, k)
-	}
-	objectInterfacePool.Put(m)
+	return make(map[string]interface{}, _MAP_DEFAULT_CAPACITY)
 }
 
 // arrayInterface is like array but returns []interface{}.
