@@ -143,8 +143,51 @@ func BenchmarkDecoderStream(b *testing.B) {
 			buf.WriteString(ones)
 		}
 		x = nil
-		if err := dec.Decode(&x); err != nil || x != 1.0 {
+		if err := dec.Decode(&x); err != nil {
 			b.Fatalf("Decode: %v after %d", err, i)
+		}
+
+		switch x := x.(type) {
+		case int64:
+			if x != 1 {
+				b.Fatalf("Decode: found %v on %d", x, i)
+			}
+		case float64:
+			if x != 1.0 {
+				b.Fatalf("Decode: found %v on %d", x, i)
+			}
+		default:
+			b.Fatalf("Decode: found %v on %d", x, i)
+		}
+	}
+}
+
+func BenchmarkAnonymousUnmarshal(b *testing.B) {
+	if codeJSON == nil {
+		b.StopTimer()
+		codeInit()
+		b.StartTimer()
+	}
+	b.SetBytes(int64(len(codeJSON)))
+	for i := 0; i < b.N; i++ {
+		var r interface{}
+		if err := Unmarshal(codeJSON, &r); err != nil {
+			b.Fatal("Unmarshal:", err)
+		}
+	}
+}
+
+func BenchmarkAnonymousUnmarshalBig(b *testing.B) {
+	if codeJSON == nil {
+		b.StopTimer()
+		initBig()
+		b.StartTimer()
+	}
+	b.SetBytes(int64(len(jsonBig)))
+	for i := 0; i < b.N; i++ {
+		var r interface{}
+		if err := Unmarshal(jsonBig, &r); err != nil {
+			b.Fatal("Unmarshal:", err)
 		}
 	}
 }

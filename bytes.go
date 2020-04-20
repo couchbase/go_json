@@ -7,19 +7,6 @@ import (
 	"strings"
 )
 
-type FindState struct {
-	found map[string][]byte
-	level int
-	scan  *scanner
-}
-
-type IndexState struct {
-	found [][]byte
-	level int
-	position int
-	scan  *scanner
-}
-
 func arreq(a, b []string) bool {
 	if len(a) == len(b) {
 		for i := range a {
@@ -130,6 +117,7 @@ func FindDecode(data []byte, path string, into interface{}) error {
 // Find a section of raw JSON by specifying a JSONPointer.
 func Find(data []byte, path string) ([]byte, error) {
 	var lastLiteral string
+	var sc scanner
 
 	if path == "" {
 		return data, nil
@@ -137,7 +125,7 @@ func Find(data []byte, path string) ([]byte, error) {
 
 	needle := parsePointer(path)
 
-	scan := newScanner(data)
+	scan := setScanner(&sc, data)
 	scan.reset()
 
 	current := make([]string, 0, 32)
@@ -196,264 +184,6 @@ func Find(data []byte, path string) ([]byte, error) {
 	return nil, nil
 }
 
-// Find a first level field
-func FirstFind(data []byte, field string) ([]byte, error) {
-	var current string
-
-	if field == "" {
-		return data, nil
-	}
-
-	scan := newScanner(data)
-	scan.reset()
-	level := 0
-
-	for scan.offset < len(scan.data) {
-
-		oldOffset := scan.offset
-		c := data[oldOffset]
-		scan.offset++
-		newOp := scan.step(scan, c)
-
-		switch newOp {
-		case scanBeginArray:
-			level++
-		case scanObjectKey:
-			if level == 1 {
-				if current == field {
-					return nextScanValue(scan)
-				}
-			}
-		case scanBeginLiteral:
-			if level == 1 && scan.parseState[0] == parseObjectKey {
-				res, err := nextLiteral(scan)
-				if err != nil {
-					return nil, err
-				}
-				current = string(res)
-			}
-		case scanArrayValue:
-		case scanEndArray, scanEndObject:
-			level--
-		case scanBeginObject:
-			level++
-		case scanContinue, scanSkipSpace, scanObjectValue, scanEnd:
-		case scanError:
-			return nil, scan.err
-		default:
-			return nil, fmt.Errorf("found unhandled json op: %v", newOp)
-		}
-	}
-
-	return nil, nil
-}
-
-// initialize a FindState
-func NewFindState(data []byte) *FindState {
-	rv := &FindState{
-		found: make(map[string][]byte, 32),
-		scan:  newScanner(data),
-	}
-	rv.scan.reset()
-	return rv
-}
-
-// Find a first level field, maintaining a state for later reuse
-func FirstFindWithState(state *FindState, field string) ([]byte, error) {
-	var current string
-
-	if state == nil {
-		return nil, fmt.Errorf("FindState is uninitialized")
-	}
-
-	if field == "" {
-		return state.scan.data, nil
-	}
-
-	found, ok := state.found[field]
-	if ok {
-		return found, nil
-	}
-
-	level := state.level
-	for state.scan.offset < len(state.scan.data) {
-
-		oldOffset := state.scan.offset
-		c := state.scan.data[oldOffset]
-		state.scan.offset++
-		newOp := state.scan.step(state.scan, c)
-
-		switch newOp {
-		case scanBeginArray:
-			level++
-		case scanObjectKey:
-			if level == 1 {
-				val, err := nextScanValue(state.scan)
-				if err != nil {
-					return nil, err
-				}
-				state.found[current] = val
-				if current == field {
-					state.level = level
-					return val, nil
-				}
-			}
-		case scanBeginLiteral:
-			if level == 1 && state.scan.parseState[0] == parseObjectKey {
-				var err error
-
-				res, err := nextLiteral(state.scan)
-				if err != nil {
-					return nil, err
-				}
-				current = string(res)
-			}
-		case scanArrayValue:
-		case scanEndArray, scanEndObject:
-			level--
-		case scanBeginObject:
-			level++
-		case scanContinue, scanSkipSpace, scanObjectValue, scanEnd:
-		case scanError:
-			return nil, state.scan.err
-		default:
-			return nil, fmt.Errorf("found unhandled json op: %v", newOp)
-		}
-	}
-
-	state.level = level
-	return nil, nil
-}
-
-// Find an array element
-func IndexFind(data []byte, index int) ([]byte, error) {
-	if index < 0 {
-		return nil, fmt.Errorf("invalid array index")
-	}
-
-	scan := newScanner(data)
-	scan.reset()
-	level := 0
-	position := 0
-
-	for scan.offset < len(scan.data) {
-		oldOffset := scan.offset
-		c := data[oldOffset]
-		scan.offset++
-		newOp := scan.step(scan, c)
-
-		switch newOp {
-		case scanBeginArray:
-			level++
-			if level == 1 {
-				if index == 0 {
-					return nextScanValue(scan)
-				}
-			}
-		case scanObjectKey:
-		case scanBeginLiteral:
-		case scanArrayValue:
-			if level == 1 {
-				position++
-				if index == position {
-					return nextScanValue(scan)
-				}
-			}
-		case scanEndArray, scanEndObject:
-			level--
-		case scanBeginObject:
-			level++
-		case scanContinue, scanSkipSpace, scanObjectValue, scanEnd:
-		case scanError:
-			return nil, scan.err
-		default:
-			return nil, fmt.Errorf("found unhandled json op: %v", newOp)
-		}
-	}
-
-	return nil, nil
-}
-
-// initialize a FindState
-func NewIndexState(data []byte) *IndexState {
-	rv := &IndexState{
-		found: make([][]byte, 32),
-		scan:  newScanner(data),
-		position: -1,
-	}
-	rv.scan.reset()
-	return rv
-}
-
-// Find an array element, maintaining a state for later reuse
-func IndexFindWithState(state *IndexState, index int) ([]byte, error) {
-        if state == nil {
-                return nil, fmt.Errorf("FindState is uninitialized")
-        }
-	if index < 0 {
-		return nil, fmt.Errorf("invalid array index")
-	}
-
-	// been here already
-	if index <= state.position {
-		return state.found[index], nil
-	}
-
-	// have already hit of array
-	if state.position < 0 {
-		state.position = 0
-	} else if state.level == 0 {
-		return nil, nil
-	}
-
-	for state.scan.offset < len(state.scan.data) {
-
-		oldOffset := state.scan.offset
-		c := state.scan.data[oldOffset]
-		state.scan.offset++
-		newOp := state.scan.step(state.scan, c)
-
-		switch newOp {
-		case scanBeginArray:
-			state.level++
-			if state.level == 1 {
-				if index == 0 {
-					val, err := nextScanValue(state.scan)
-					if err != nil {
-						return nil, err
-					}
-					state.found = append(state.found, val)
-					return val, err
-				}
-			}
-		case scanObjectKey:
-		case scanBeginLiteral:
-		case scanArrayValue:
-			if state.level == 1 {
-				state.position++
-				if index == state.position {
-					val, err := nextScanValue(state.scan)
-					if err != nil {
-						return nil, err
-					}
-					state.found = append(state.found, val)
-					return val, err
-				}
-			}
-		case scanEndArray, scanEndObject:
-			state.level--
-		case scanBeginObject:
-			state.level++
-		case scanContinue, scanSkipSpace, scanObjectValue, scanEnd:
-		case scanError:
-			return nil, state.scan.err
-		default:
-			return nil, fmt.Errorf("found unhandled json op: %v", newOp)
-		}
-	}
-
-	return nil, nil
-}
 func sliceToEnd(s []string) []string {
 	end := len(s) - 1
 	if end >= 0 {
@@ -473,12 +203,14 @@ func mustParseInt(s string) int {
 
 // ListPointers lists all possible pointers from the given input.
 func ListPointers(data []byte) ([]string, error) {
+	var sc scanner
+
 	if len(data) == 0 {
 		return nil, fmt.Errorf("Invalid JSON")
 	}
 	rv := []string{""}
 
-	scan := newScanner(data)
+	scan := setScanner(&sc, data)
 	scan.reset()
 
 	beganLiteral := 0
@@ -519,6 +251,8 @@ func ListPointers(data []byte) ([]string, error) {
 
 // FindMany finds several jsonpointers in one pass through the input.
 func FindMany(data []byte, paths []string) (map[string][]byte, error) {
+	var sc1, sc2 scanner
+
 	tpaths := make([]string, 0, len(paths))
 	m := map[string][]byte{}
 	for _, p := range paths {
@@ -530,7 +264,7 @@ func FindMany(data []byte, paths []string) (map[string][]byte, error) {
 	}
 	sort.Strings(tpaths)
 
-	scan := newScanner(data)
+	scan := setScanner(&sc1, data)
 	scan.reset()
 
 	todo := len(tpaths)
@@ -591,7 +325,7 @@ func FindMany(data []byte, paths []string) (map[string][]byte, error) {
 			}
 
 			// At this point, we have an exact match, so grab it.
-			stmp := newScanner(data)
+			stmp := setScanner(&sc2, data)
 			stmp.offset = scan.offset
 			val, _, err := nextValue(data, stmp)
 			if err != nil {

@@ -838,8 +838,10 @@ func TestMarshalEmbeds(t *testing.T) {
 
 func TestUnmarshal(t *testing.T) {
 	for i, tt := range unmarshalTests {
+		var sc scanner
+
 		in := []byte(tt.in)
-		scan := newScanner(in)
+		scan := setScanner(&sc, in)
 		if err := checkValid(in, scan); err != nil {
 			if !reflect.DeepEqual(err, tt.err) {
 				t.Errorf("#%d: checkValid: %#v", i, err)
@@ -901,8 +903,11 @@ func TestUnmarshal(t *testing.T) {
 }
 
 func TestUnmarshalMarshal(t *testing.T) {
-	initBig()
 	var v interface{}
+
+	if jsonBig == nil {
+		initBig()
+	}
 	if err := Unmarshal(jsonBig, &v); err != nil {
 		t.Fatalf("Unmarshal: %v", err)
 	}

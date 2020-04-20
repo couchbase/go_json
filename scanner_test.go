@@ -105,8 +105,11 @@ func TestIndent(t *testing.T) {
 // Tests of a large random structure.
 
 func TestCompactBig(t *testing.T) {
-	initBig()
 	var buf bytes.Buffer
+
+	if jsonBig == nil {
+		initBig()
+	}
 	if err := Compact(&buf, jsonBig); err != nil {
 		t.Fatalf("Compact: %v", err)
 	}
@@ -119,8 +122,11 @@ func TestCompactBig(t *testing.T) {
 }
 
 func TestIndentBig(t *testing.T) {
-	initBig()
 	var buf bytes.Buffer
+
+	if jsonBig == nil {
+		initBig()
+	}
 	if err := Indent(&buf, jsonBig, "", "\t"); err != nil {
 		t.Fatalf("Indent1: %v", err)
 	}
@@ -180,8 +186,12 @@ func TestIndentErrors(t *testing.T) {
 }
 
 func TestNextValueBig(t *testing.T) {
-	initBig()
-	scan := newScanner(jsonBig)
+	var sc scanner
+
+	if jsonBig == nil {
+		initBig()
+	}
+	scan := setScanner(&sc, jsonBig)
 	item, rest, err := nextValue(jsonBig, scan)
 	if err != nil {
 		t.Fatalf("nextValue: %s", err)
@@ -193,7 +203,7 @@ func TestNextValueBig(t *testing.T) {
 		t.Errorf("invalid rest: %d", len(rest))
 	}
 
-	scan = newScanner(jsonBig)
+	scan = setScanner(&sc, jsonBig)
 	item, rest, err = nextValue(append(jsonBig, "HELLO WORLD"...), scan)
 	if err != nil {
 		t.Fatalf("nextValue extra: %s", err)
@@ -209,7 +219,9 @@ func TestNextValueBig(t *testing.T) {
 var benchScan scanner
 
 func BenchmarkSkipValue(b *testing.B) {
-	initBig()
+	if jsonBig == nil {
+		initBig()
+	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		nextValue(jsonBig, &benchScan)

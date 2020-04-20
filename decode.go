@@ -13,7 +13,6 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"math"
 	"reflect"
 	"runtime"
 	"strconv"
@@ -90,21 +89,13 @@ func Unmarshal(data []byte, v interface{}) error {
 	// Avoids filling out half a data structure
 	// before discovering a JSON syntax error.
 	var d decodeState
-	err := checkValid(data, newScanner(data))
+	var scan scanner
+
+	setScanner(&scan, data)
+	err := checkValid(data, &scan)
 	if err != nil {
 		return err
 	}
-
-	d.init(data)
-	return d.unmarshal(v)
-}
-
-// MB-25905 - do not validate initially: our jsons
-// come from the KV and we'll take a chance to avoid a
-// costly double scan.
-// It will work out for us 99.9% of the time
-func UnmarshalNoValidate(data []byte, v interface{}) error {
-	var d decodeState
 
 	d.init(data)
 	return d.unmarshal(v)
@@ -295,7 +286,9 @@ func (d *decodeState) saveError(err error) {
 // next cuts off and returns the next full JSON value in d.scan.data[d.scan.offset:].
 // The next value is known to be an object or array, not a literal.
 func (d *decodeState) next() []byte {
-	ns := newScanner(d.scan.data)
+	var sc scanner
+
+	ns := setScanner(&sc, d.scan.data)
 	ns.offset = d.scan.offset
 	c := d.scan.data[d.scan.offset]
 	item, rest, err := nextValue(d.scan.data, ns)
@@ -342,7 +335,9 @@ func (d *decodeState) scanWhile(op int) int {
 // it updates d.scan.offset to point past the decoded value.
 func (d *decodeState) value(v reflect.Value) {
 	if !v.IsValid() {
-		ns := newScanner(d.scan.data)
+		var sc scanner
+
+		ns := setScanner(&sc, d.scan.data)
 		ns.offset = d.scan.offset
 		_, rest, err := nextValue(d.scan.data, ns)
 		if err != nil {
@@ -781,32 +776,14 @@ func (d *decodeState) convertNumber(s string) (interface{}, error) {
 		return Number(s), nil
 	}
 
-	// First, we try to parse the number as an int64. If that
-	// fails, we parse it as a float64.
-	//
-	// If the input string has a non-zero fractional part,
-	// ParseInt() will produce an error, and we revert to float64.
-	//
-	// If the input string is an integer, but is less than
-	// MinInt64 or greater than MaxInt64, this is an overflow. In
-	// this case, ParseInt() will not produce an error, and will
-	// silently truncate the overflow to MinInt64 or MaxInt64,
-	// respectively.
-	//
-	// To handle this silent overlfow, we check for one of two
-	// things: (1) the parsed value is neither Mint64 nor
-	// MaxInt64, which would not be the case if there was overflow
-	// and truncation; or (2) the parsed value has the same
-	// decimal string representation as the input string, which
-	// would also not be the case if there was overflow and
-	// truncation.
-	//
-	// If there is overflow, we revert to float64.
-	i, err := strconv.ParseInt(s, 10, 64)
-	if err == nil &&
-		((i > math.MinInt64 && i < math.MaxInt64) ||
-			strconv.FormatInt(i, 10) == s) {
-		return i, nil
+	src := string(s)
+
+	// an int64 contains nearly 20 digits
+	if d.scan.useInts && len(s) < 19 {
+		i, err := strconv.ParseInt(src, 10, 64)
+		if err == nil {
+			return i, nil
+		}
 	}
 
 	f, err := strconv.ParseFloat(s, 64)

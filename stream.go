@@ -16,7 +16,7 @@ type Decoder struct {
 	buf   []byte
 	d     decodeState
 	start int // start of unread data in buf
-	scan  *scanner
+	scan  scanner
 	err   error
 
 	tokenState int
@@ -28,7 +28,12 @@ type Decoder struct {
 // The decoder introduces its own buffering and may
 // read data from r beyond the JSON values requested.
 func NewDecoder(r io.Reader) *Decoder {
-	return &Decoder{r: r, scan: newScanner(nil)}
+	rv := &Decoder{r: r}
+	setScanner(&rv.scan, nil)
+
+	// avoid stateEndTop errors, since we expect other data after each value
+	rv.scan.checkTop = false
+	return rv
 }
 
 // UseNumber causes the Decoder to unmarshal a number into an interface{} as a
@@ -90,19 +95,20 @@ func (dec *Decoder) Buffered() io.Reader {
 // readValue reads a JSON value into the scanner data buffer
 // It returns the length of the encoding.
 func (dec *Decoder) readValue() (int, error) {
-	dec.scan.reset()
-	dec.scan.offset = dec.start
+	scan := &dec.scan
+	scan.reset()
+	scan.offset = dec.start
 
 	start := dec.start
 	var err error
 Input:
 	for {
 		// Look in the buffer for a new value.
-		for dec.scan.offset < len(dec.scan.data) {
-			i := dec.scan.offset
-			c := dec.scan.data[i]
-			dec.scan.offset++
-			v := dec.scan.step(dec.scan, c)
+		for scan.offset < len(scan.data) {
+			i := scan.offset
+			c := scan.data[i]
+			scan.offset++
+			v := scan.step(scan, c)
 			if v == scanEnd {
 				start = i
 				break Input
@@ -110,25 +116,25 @@ Input:
 			// scanEnd is delayed one byte.
 			// We might block trying to get that byte from src,
 			// so instead invent a space byte.
-			if (v == scanEndObject || v == scanEndArray) && dec.scan.step(dec.scan, ' ') == scanEnd {
+			if (v == scanEndObject || v == scanEndArray) && scan.step(scan, ' ') == scanEnd {
 				start = i + 1
 				break Input
 			}
 			if v == scanError {
-				dec.err = dec.scan.err
-				return 0, dec.scan.err
+				dec.err = scan.err
+				return 0, scan.err
 			}
 		}
-		start = len(dec.scan.data)
+		start = len(scan.data)
 
 		// Did the last read have an error?
 		// Delayed until now to allow buffer scan.
 		if err != nil {
 			if err == io.EOF {
-				if dec.scan.step(dec.scan, ' ') == scanEnd {
+				if scan.step(scan, ' ') == scanEnd {
 					break Input
 				}
-				if nonSpace(dec.scan.data) {
+				if nonSpace(scan.data) {
 					err = io.ErrUnexpectedEOF
 				}
 			}
@@ -162,10 +168,19 @@ func (dec *Decoder) refill() (int, error) {
 
 	// Grow buffer if not large enough.
 	const minRead = 512
-	if cap(dec.scan.data)-len(dec.scan.data) < minRead {
-		newBuf := make([]byte, len(dec.scan.data), 2*cap(dec.scan.data)+minRead)
-		copy(newBuf, dec.scan.data)
-		dec.scan.data = newBuf
+	const initialRead = 2048
+
+	c := cap(dec.scan.data)
+	if c-len(dec.scan.data) < minRead {
+
+		// start with a sizeable buffer
+		if c == 0 {
+			dec.scan.data = make([]byte, 0, initialRead)
+		} else {
+			newBuf := make([]byte, len(dec.scan.data), 2*cap(dec.scan.data)+minRead)
+			copy(newBuf, dec.scan.data)
+			dec.scan.data = newBuf
+		}
 	}
 
 	// Read. Delay error for next iteration (after scan).

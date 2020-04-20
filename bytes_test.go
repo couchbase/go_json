@@ -75,144 +75,6 @@ func TestListPointers(t *testing.T) {
 	}
 }
 
-var firstDoc = []byte("{ \"f1\": \"1\", \"f2\": 2, \"f3\": { \"a\": 3 }, \"f4\": [ 4 ], \"f1234567890123456789012345678901234567890\": 33, \"f5\": 5 }")
-var firstTests = []struct {
-	field string
-	res   string
-}{
-	{"f1", "\"1\""},
-	{"f2", "2"},
-	{"f3", "{ \"a\": 3 }"},
-	{"f4", "[ 4 ]"},
-	{"f5", "5"},
-}
-
-func TestFirstFind(t *testing.T) {
-	res, err := FirstFind([]byte("[ null ]"), "null")
-	if err != nil {
-		t.Fatalf("null array element got %v", err)
-	}
-	if res != nil {
-		t.Fatal("mixing null field and null value")
-	}
-
-	res, err = FirstFind([]byte("[ \"f1\" ]"), "f1")
-	if err != nil {
-		t.Fatalf("array element got %v", err)
-	}
-	if res != nil {
-		t.Fatal("mixing field and array element")
-	}
-
-	res, err = FirstFind([]byte("[ \"a\" ]"), "a")
-	if err != nil {
-		t.Fatalf("field null got %v", err)
-	}
-	if res != nil {
-		t.Fatal("looked for field, found string")
-	}
-
-	for _, test := range firstTests {
-		res, err := FirstFind(firstDoc, test.field)
-		if err != nil {
-			t.Fatalf("field %q got %v", test.field, err)
-		}
-
-		if strings.TrimSpace(string(res)) != test.res {
-			t.Fatalf("field %q expected %q found %q", test.field, test.res, res)
-		}
-	}
-	field := "f99"
-
-	res, err = FirstFind(firstDoc, field)
-	if err != nil {
-		t.Fatalf("field %q got %v", field, err)
-	}
-	if res != nil {
-		t.Fatalf("field %q expected nothing found %q", field, res)
-	}
-}
-
-func TestFirstFindWithState(t *testing.T) {
-	state := NewFindState([]byte("[ null ]"))
-	res, err := FirstFindWithState(state, "null")
-	if err != nil {
-		t.Fatalf("null array element  got %v", err)
-	}
-	if res != nil {
-		t.Fatal("mixing null field and null value")
-	}
-
-	state = NewFindState([]byte("[ \"f1\" ]"))
-	res, err = FirstFindWithState(state, "f1")
-	if err != nil {
-		t.Fatalf("array element got %v", err)
-	}
-	if res != nil {
-		t.Fatal("mixing field and array element")
-	}
-
-	state = NewFindState([]byte("[ \"a\" ]"))
-	res, err = FirstFindWithState(state, "a")
-	if err != nil {
-		t.Fatalf("field null got %v", err)
-	}
-	if res != nil {
-		t.Fatal("looked for field, found string")
-	}
-
-	// scan forward
-	state = NewFindState(firstDoc)
-	for _, test := range firstTests {
-		res, err := FirstFindWithState(state, test.field)
-		if err != nil {
-			t.Fatalf("field %q got %q", test.field, err)
-		}
-
-		gotRes := strings.TrimSpace(string(res))
-		if gotRes != string(test.res) {
-			t.Fatalf("field %q expected %q found %q", test.field, test.res, gotRes)
-		}
-	}
-	field := "f99"
-
-	res, err = FirstFindWithState(state, field)
-	if err != nil {
-		t.Fatalf("field %q got %q", field, err)
-	}
-
-	if string(res) != "" {
-		t.Fatalf("field %q expected nothing found %q", field, string(res))
-	}
-
-	// scan backwards
-	state = NewFindState(firstDoc)
-	res, err = FirstFindWithState(state, field)
-	if err != nil {
-		t.Fatal("field %q got %q", field, err)
-	}
-
-	if string(res) != "" {
-		t.Fatalf("field %q expected nothing found %q", field, string(res))
-	}
-
-	offset := state.scan.offset
-	for _, test := range firstTests {
-		res, err := FirstFindWithState(state, test.field)
-		if err != nil {
-			t.Fatalf("field %q got %q", test.field, err)
-		}
-
-		gotRes := strings.TrimSpace(string(res))
-		if gotRes != string(test.res) {
-			t.Fatalf("field %q expected %q found %q", field, test.res, gotRes)
-		}
-		if offset != state.scan.offset {
-			t.Fatalf("field %q was not cached", test.field)
-		}
-	}
-}
-
 func TestPointerRoot(t *testing.T) {
 	got, err := Find([]byte(objSrc), "")
 	if err != nil {
@@ -376,7 +238,7 @@ func TestCBugg406(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to find thing: %v", err)
 	}
-	exp := ` "2.0.0-1976-rel-enterprise"`
+	exp := `"2.0.0-1976-rel-enterprise"`
 	if string(found) != exp {
 		t.Fatalf("Expected %q, got %q", exp, found)
 	}
@@ -455,7 +317,7 @@ func TestFindBrokenJSONAfterValue(t *testing.T) {
 			t.Errorf(`expected "value", got : %v`, string(val))
 		}
 
-		val, err = FirstFind(bytes, "test")
+		val, err = FindKey(bytes, "test")
 		if err != nil {
 			t.Errorf("unexpected error %v", err)
 		}

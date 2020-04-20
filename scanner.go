@@ -15,7 +15,6 @@ package json
 
 import (
 	"strconv"
-	"unicode/utf8"
 )
 
 // checkValid verifies that data is valid JSON-encoded data.
@@ -37,130 +36,10 @@ func checkValid(data []byte, scan *scanner) error {
 
 // Validate some alleged JSON.  Return nil iff the JSON is valid.
 func Validate(data []byte) error {
-	return checkValid(data, newScanner(data))
-}
+	var sc scanner
 
-// nextLiteral scans the data and grabs the next literal, in one pass
-func nextLiteral(scan *scanner) ([]byte, error) {
-	l := len(scan.data)
-
-	// first try and see if we can pass the literal straight from our slice
-	start := scan.offset
-	for {
-		if scan.offset >= l {
-			return nil, &SyntaxError{"unexpected end of JSON input", int64(scan.offset)}
-		}
-		c := scan.data[scan.offset]
-
-		// found the other side
-		if c == '"' {
-			scan.step = stateEndValue
-			oldOffset := scan.offset
-			scan.offset++
-			return scan.data[start:oldOffset], nil
-		}
-
-		// no control characters
-		if c < 0x20 {
-			_ = scan.error(c, "in string literal")
-			return nil, scan.err
-		}
-		if c == '\\' || c >= utf8.RuneSelf {
-			break
-		}
-		scan.offset++
-	}
-
-	usableCap := (scan.offset - start) * 2
-	if usableCap < 64 {
-		usableCap = 64
-	}
-	literal := make([]byte, usableCap)
-	copy(literal, scan.data[start:scan.offset])
-	out := scan.offset - start
-
-	// we always leave 8 bytes for a possible utf16
-	usableCap -= 8
-	for {
-		if scan.offset >= l {
-			return nil, &SyntaxError{"unexpected end of JSON input", int64(scan.offset)}
-		}
-		c := scan.data[scan.offset]
-
-		// found the other side
-		if c == '"' {
-			scan.step = stateEndValue
-			scan.offset++
-			return literal[:out], nil
-		}
-
-		// no control characters
-		if c < 0x20 {
-			_ = scan.error(c, "in string literal")
-			return nil, scan.err
-		}
-
-		// make more space
-		if out >= usableCap {
-			newCap := (usableCap + 8) * 2
-			newLiteral := make([]byte, newCap)
-			copy(newLiteral, literal[:out])
-			literal = newLiteral
-			usableCap = newCap - 8
-		}
-
-		// escape
-		if c == '\\' {
-			scan.offset++
-			c := scan.data[scan.offset]
-			scan.offset++
-			switch c {
-			case '"', '\\', '/', '\'':
-				literal[out] = c
-			case 'b':
-				literal[out] = '\b'
-			case 'f':
-				literal[out] = '\f'
-			case 'n':
-				literal[out] = '\n'
-			case 'r':
-				literal[out] = '\r'
-			case 't':
-				literal[out] = '\t'
-			case 'u':
-				oldOffset := scan.offset - 2
-				rr, size := getu4OrSurrogate(scan.data, oldOffset)
-				if rr < 0 {
-					_ = scan.error(c, "invalid unicode sequence")
-					return nil, scan.err
-				}
-				scan.offset = oldOffset + size
-				out += utf8.EncodeRune(literal[out:], rr)
-				continue
-			default:
-				_ = scan.error(c, "invalid escaped character")
-				return nil, scan.err
-			}
-			out++
-
-			// ascii
-		} else if c < utf8.RuneSelf {
-			literal[out] = c
-			out++
-			scan.offset++
-
-			// UTFs
-		} else {
-			rr, size := utf8.DecodeRune(scan.data[scan.offset:])
-			scan.offset += size
-			out += utf8.EncodeRune(literal[out:], rr)
-		}
-	}
-
-	// we should never get here
-	_ = scan.error(' ', "unxepected state")
-	return nil, scan.err
-
+	scan := setScanner(&sc, data)
+	return checkValid(data, scan)
 }
 
 // nextValue splits data after the next whole JSON value,
@@ -178,7 +57,7 @@ func nextValue(data []byte, scan *scanner) (value, rest []byte, err error) {
 			switch v {
 			// probe the scanner with a space to determine whether we will
 			// get scanEnd on the next character. Otherwise, if the next character
-			// is not a space, scanEndTop allocates a needless error.
+			// is not a space, stateEndTop allocates a needless error.
 			case scanEndObject, scanEndArray:
 				if scan.step(scan, ' ') == scanEnd {
 					return data[start : i+1], data[i+1:], nil
@@ -194,44 +73,6 @@ func nextValue(data []byte, scan *scanner) (value, rest []byte, err error) {
 		return nil, nil, scan.err
 	}
 	return data[start:], nil, nil
-}
-
-// nextScanValue behaves like nextValue, but preserves the scan, so as to be
-// useful in single scan environments
-// it does not need a data argument, and will not return rest
-func nextScanValue(baseScan *scanner) ([]byte, error) {
-	scan := newScanner(baseScan.data)
-	scan.reset()
-	scan.offset = baseScan.offset
-	start := scan.offset
-	for scan.offset < len(scan.data) {
-		i := scan.offset
-		c := scan.data[i]
-		scan.offset++
-		v := scan.step(scan, c)
-		if v >= scanEndObject {
-			switch v {
-			case scanEndObject, scanEndArray:
-
-				// since we are looking for a value within a scan, here we do not expect
-				// the scan to end, and there will be something after the value
-				// the next scan step therefore is stateEndValue
-				if scan.step(scan, ' ') == scanEnd {
-					baseScan.step = stateEndValue
-					baseScan.offset = scan.offset
-					return scan.data[start : i+1], nil
-				}
-			case scanError:
-				return nil, scan.err
-			case scanEnd:
-				return scan.data[start:i], nil
-			}
-		}
-	}
-	if scan.eof() == scanError {
-		return nil, scan.err
-	}
-	return scan.data[start:], nil
 }
 
 // A SyntaxError is a description of a JSON syntax error.
@@ -265,13 +106,17 @@ type scanner struct {
 	step func(*scanner, byte) int
 
 	// Reached end of top-level value.
-	endTop bool
+	endTop   bool
+	checkTop bool
 
 	// Stack of what we're in the middle of - array values, object keys, object values.
 	parseState []int
 
 	// Error that happened, if any.
 	err error
+
+	// NumberParsing
+	useInts bool
 
 	// 1-byte redo (see undo method)
 	redo      bool
@@ -325,8 +170,12 @@ func (s *scanner) reset() {
 }
 
 // Sets up a scanner
-func newScanner(data []byte) *scanner {
-	return &scanner{offset: 0, data: data}
+func setScanner(scan *scanner, data []byte) *scanner {
+	*scan = scanner{}
+	scan.offset = 0
+	scan.data = data
+	scan.checkTop = true
+	return scan
 }
 
 // eof tells the scanner that the end of input has been reached.
@@ -342,7 +191,7 @@ func (s *scanner) eof() int {
 	if s.endTop {
 		return scanEnd
 	}
-	if s.err == nil {
+	if s.err == nil || len(s.data) == s.offset {
 		s.err = &SyntaxError{"unexpected end of JSON input", int64(s.offset)}
 	}
 	return scanError
@@ -381,23 +230,22 @@ func (s *scanner) skipSpaces(c byte) bool {
 
 		for {
 			if s.offset >= l {
-				break
+				return true
 			}
 			c = s.data[s.offset]
 			if isSpace(c) {
 				s.offset++
 			} else {
-				break
+				return true
 			}
 		}
-		return true
 	}
 	return false
 }
 
 // stateBeginValueOrEmpty is the state after reading `[`.
 func stateBeginValueOrEmpty(s *scanner, c byte) int {
-	if c <= ' ' && s.skipSpaces(c) {
+	if s.skipSpaces(c) {
 		return scanSkipSpace
 	}
 	if c == ']' {
@@ -408,7 +256,7 @@ func stateBeginValueOrEmpty(s *scanner, c byte) int {
 
 // stateBeginValue is the state at the beginning of the input.
 func stateBeginValue(s *scanner, c byte) int {
-	if c <= ' ' && s.skipSpaces(c) {
+	if s.skipSpaces(c) {
 		return scanSkipSpace
 	}
 	switch c {
@@ -424,9 +272,11 @@ func stateBeginValue(s *scanner, c byte) int {
 		s.step = stateInString
 		return scanBeginLiteral
 	case '-':
+		s.useInts = true
 		s.step = stateNeg
 		return scanBeginLiteral
 	case '0': // beginning of 0.123
+		s.useInts = true
 		s.step = state0
 		return scanBeginLiteral
 	case 't': // beginning of true
@@ -440,6 +290,7 @@ func stateBeginValue(s *scanner, c byte) int {
 		return scanBeginLiteral
 	}
 	if '1' <= c && c <= '9' { // beginning of 1234.5
+		s.useInts = true
 		s.step = state1
 		return scanBeginLiteral
 	}
@@ -448,7 +299,7 @@ func stateBeginValue(s *scanner, c byte) int {
 
 // stateBeginStringOrEmpty is the state after reading `{`.
 func stateBeginStringOrEmpty(s *scanner, c byte) int {
-	if c <= ' ' && s.skipSpaces(c) {
+	if s.skipSpaces(c) {
 		return scanSkipSpace
 	}
 	if c == '}' {
@@ -461,7 +312,7 @@ func stateBeginStringOrEmpty(s *scanner, c byte) int {
 
 // stateBeginString is the state after reading `{"key": value,`.
 func stateBeginString(s *scanner, c byte) int {
-	if c <= ' ' && s.skipSpaces(c) {
+	if s.skipSpaces(c) {
 		return scanSkipSpace
 	}
 	if c == '"' {
@@ -523,7 +374,7 @@ func stateEndValue(s *scanner, c byte) int {
 // such as after reading `{}` or `[1,2,3]`.
 // Only space characters should be seen now.
 func stateEndTop(s *scanner, c byte) int {
-	if c != ' ' && c != '\t' && c != '\r' && c != '\n' {
+	if s.checkTop && c != ' ' && c != '\t' && c != '\r' && c != '\n' {
 		// Complain about non-space byte on next call.
 		s.error(c, "after top-level value")
 	}
@@ -633,10 +484,12 @@ func state1(s *scanner, c byte) int {
 // state0 is the state after reading `0` during a number.
 func state0(s *scanner, c byte) int {
 	if c == '.' {
+		s.useInts = false
 		s.step = stateDot
 		return scanContinue
 	}
 	if c == 'e' || c == 'E' {
+		s.useInts = false
 		s.step = stateE
 		return scanContinue
 	}

@@ -13,8 +13,10 @@ func Compact(dst *bytes.Buffer, src []byte) error {
 }
 
 func compact(dst *bytes.Buffer, src []byte, escape bool) error {
+	var sc scanner
+
 	origLen := dst.Len()
-	scan := newScanner(src)
+	scan := setScanner(&sc, src)
 	scan.reset()
 
 	start := scan.offset
@@ -86,8 +88,10 @@ func newline(dst *bytes.Buffer, prefix, indent string, depth int) {
 // For example, if src has no trailing spaces, neither will dst;
 // if src ends in a trailing newline, so will dst.
 func Indent(dst *bytes.Buffer, src []byte, prefix, indent string) error {
+	var sc scanner
+
 	origLen := dst.Len()
-	scan := newScanner(src)
+	scan := setScanner(&sc, src)
 	scan.reset()
 	needIndent := false
 	depth := 0
