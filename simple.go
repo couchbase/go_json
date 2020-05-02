@@ -420,20 +420,24 @@ func nextScanValue(baseScan *scanner) ([]byte, error) {
 	return scan.data[start:], nil
 }
 
-func nextUnmarshalledValue(baseScan *scanner) (interface{}, error) {
-	var s scanner
+func nextUnmarshalledValue(scan *scanner) (interface{}, error) {
+	var saveScan scanner
 
 	// avoid cost of scanner allocation
-	// avoid needless stateEndTop error, since we are scanning mid scan
-	scan := setScanner(&s, baseScan.data)
+	saveScan = *scan
+
+	scan = setScanner(scan, scan.data)
 	scan.reset()
+	scan.offset = saveScan.offset
+
+	// avoid needless stateEndTop error, since we are scanning mid scan
 	scan.checkTop = false
-	scan.offset = baseScan.offset
 
 	val, err := unmarshaledValue(scan)
 
 	// unmarshalValue has gone one byte too far
-	baseScan.offset = scan.offset - 1
-	baseScan.step = stateEndValue
+	saveScan.offset = scan.offset - 1
+	saveScan.step = stateEndValue
+	*scan = saveScan
 	return val, err
 }
