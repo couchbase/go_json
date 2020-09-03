@@ -371,15 +371,16 @@ outer:
 // preserving the scan, and moving it along to the rest of the document
 // useful in single scan environments
 // it does not need a data argument, and will not return rest
-func nextScanValue(baseScan *scanner) ([]byte, error) {
-	var s scanner
+func nextScanValue(scan *scanner) ([]byte, error) {
+	var saveScan scanner
 
 	// avoid cost of scanner allocation
 	// avoid needless stateEndTop error, since we are scanning mid scan
-	scan := setScanner(&s, baseScan.data)
-	scan.checkTop = false
+	saveScan = *scan
+	scan = setScanner(scan, scan.data)
 	scan.reset()
-	scan.offset = baseScan.offset
+	scan.checkTop = false
+	scan.offset = saveScan.offset
 
 	// get to beginning of token
 	if scan.offset < len(scan.data) {
@@ -403,20 +404,25 @@ func nextScanValue(baseScan *scanner) ([]byte, error) {
 				// the scan to end, and there will be something after the value
 				// the next scan step therefore is stateEndValue
 				if scan.step(scan, ' ') == scanEnd {
-					baseScan.step = stateEndValue
-					baseScan.offset = scan.offset
+					saveScan.offset = scan.offset
+					saveScan.step = stateEndValue
+					*scan = saveScan
 					return scan.data[start : i+1], nil
 				}
 			case scanError:
+				*scan = saveScan
 				return nil, scan.err
 			case scanEnd:
+				*scan = saveScan
 				return scan.data[start:i], nil
 			}
 		}
 	}
 	if scan.eof() == scanError {
+		*scan = saveScan
 		return nil, scan.err
 	}
+	*scan = saveScan
 	return scan.data[start:], nil
 }
 

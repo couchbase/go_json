@@ -34,7 +34,7 @@ type IndexState struct {
 
 // Find a first level field
 func FindKey(data []byte, field string) ([]byte, error) {
-	var current string
+	var current []byte
 	var sc scanner
 
 	if field == "" {
@@ -57,7 +57,7 @@ func FindKey(data []byte, field string) ([]byte, error) {
 			level++
 		case scanObjectKey:
 			if level == 1 {
-				if current == field {
+				if string(current) == field {
 					return nextScanValue(scan)
 				}
 			}
@@ -67,7 +67,7 @@ func FindKey(data []byte, field string) ([]byte, error) {
 				if err != nil {
 					return nil, err
 				}
-				current = string(res)
+				current = res
 			}
 		case scanArrayValue:
 		case scanEndArray, scanEndObject:
@@ -103,7 +103,7 @@ func (state *KeyState) Release() {
 
 // Find a first level field, maintaining a state for later reuse
 func (state *KeyState) FindKey(field string) ([]byte, error) {
-	var current string
+	var current []byte
 
 	if field == "" {
 		return state.scan.data, nil
@@ -132,8 +132,8 @@ func (state *KeyState) FindKey(field string) ([]byte, error) {
 				if err != nil {
 					return nil, err
 				}
-				state.found[current] = val
-				if current == field {
+				state.found[string(current)] = val
+				if string(current) == field {
 					state.level = level
 					return val, nil
 				}
@@ -146,7 +146,7 @@ func (state *KeyState) FindKey(field string) ([]byte, error) {
 				if err != nil {
 					return nil, err
 				}
-				current = string(res)
+				current = res
 			}
 		case scanArrayValue:
 		case scanEndArray, scanEndObject:
