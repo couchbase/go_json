@@ -159,6 +159,14 @@ func MarshalNoEscape(v interface{}) ([]byte, error) {
 	return e.Bytes(), nil
 }
 
+// MarshalNoEscapeToBuffer is like Marshal, but does not escape <, &, >, and writes to a buffer
+func MarshalNoEscapeToBuffer(v interface{}, buf *bytes.Buffer) error {
+	e := &encodeState{Buffer: *buf}
+	err := e.marshal(v, encOpts{escapeHTML: false})
+	*buf = e.Buffer
+	return err
+}
+
 // MarshalIndent is like Marshal but applies Indent to format the output.
 func MarshalIndent(v interface{}, prefix, indent string) ([]byte, error) {
 	b, err := Marshal(v)
