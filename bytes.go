@@ -14,10 +14,10 @@ type FindState struct {
 }
 
 type IndexState struct {
-	found [][]byte
-	level int
+	found    [][]byte
+	level    int
 	position int
-	scan  *scanner
+	scan     *scanner
 }
 
 func arreq(a, b []string) bool {
@@ -377,8 +377,8 @@ func IndexFind(data []byte, index int) ([]byte, error) {
 // initialize a FindState
 func NewIndexState(data []byte) *IndexState {
 	rv := &IndexState{
-		found: make([][]byte, 32),
-		scan:  newScanner(data),
+		found:    make([][]byte, 0, 32),
+		scan:     newScanner(data),
 		position: -1,
 	}
 	rv.scan.reset()
@@ -387,9 +387,9 @@ func NewIndexState(data []byte) *IndexState {
 
 // Find an array element, maintaining a state for later reuse
 func IndexFindWithState(state *IndexState, index int) ([]byte, error) {
-        if state == nil {
-                return nil, fmt.Errorf("FindState is uninitialized")
-        }
+	if state == nil {
+		return nil, fmt.Errorf("FindState is uninitialized")
+	}
 	if index < 0 {
 		return nil, fmt.Errorf("invalid array index")
 	}
@@ -417,12 +417,12 @@ func IndexFindWithState(state *IndexState, index int) ([]byte, error) {
 		case scanBeginArray:
 			state.level++
 			if state.level == 1 {
+				val, err := nextScanValue(state.scan)
+				if err != nil {
+					return nil, err
+				}
+				state.found = append(state.found, val)
 				if index == 0 {
-					val, err := nextScanValue(state.scan)
-					if err != nil {
-						return nil, err
-					}
-					state.found = append(state.found, val)
 					return val, err
 				}
 			}
@@ -431,12 +431,12 @@ func IndexFindWithState(state *IndexState, index int) ([]byte, error) {
 		case scanArrayValue:
 			if state.level == 1 {
 				state.position++
+				val, err := nextScanValue(state.scan)
+				if err != nil {
+					return nil, err
+				}
+				state.found = append(state.found, val)
 				if index == state.position {
-					val, err := nextScanValue(state.scan)
-					if err != nil {
-						return nil, err
-					}
-					state.found = append(state.found, val)
 					return val, err
 				}
 			}
