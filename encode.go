@@ -167,6 +167,16 @@ func MarshalNoEscapeToBuffer(v interface{}, buf *bytes.Buffer) error {
 	return err
 }
 
+// This is a specialisation of MarshalNoEscapeToBuffer so we can avoid implicit heap allocations when converting for interface{}
+// (We can also skip much of the generic processing and call the encodeState function directly.)
+// It is used by stringValue.WriteJSON
+func MarshalStringNoEscapeToBuffer(s string, buf *bytes.Buffer) error {
+	e := &encodeState{Buffer: *buf}
+	e.string(s, false)		// escapeHTML: false
+	*buf = e.Buffer
+	return nil
+}
+
 // MarshalIndent is like Marshal but applies Indent to format the output.
 func MarshalIndent(v interface{}, prefix, indent string) ([]byte, error) {
 	b, err := Marshal(v)
