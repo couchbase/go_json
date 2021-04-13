@@ -177,6 +177,14 @@ func MarshalStringNoEscapeToBuffer(s string, buf *bytes.Buffer) error {
 	return nil
 }
 
+// This specialisation is the same as the above barring escaping HTML (to match Marshal())
+func MarshalStringToBuffer(s string, buf *bytes.Buffer) error {
+	e := &encodeState{Buffer: *buf}
+	e.string(s, true)		// escapeHTML: true
+	*buf = e.Buffer
+	return nil
+}
+
 // MarshalIndent is like Marshal but applies Indent to format the output.
 func MarshalIndent(v interface{}, prefix, indent string) ([]byte, error) {
 	b, err := Marshal(v)
