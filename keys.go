@@ -27,6 +27,7 @@ type ScanState struct {
 
 type IndexState struct {
 	found    [][]byte
+	started  bool
 	level    int
 	position int
 	scan     scanner
@@ -335,8 +336,8 @@ func (state *IndexState) FindIndex(index int) ([]byte, error) {
 	}
 
 	// have already hit of array
-	if state.position < 0 {
-		state.position = 0
+	if !state.started {
+		state.started = true
 	} else if state.level == 0 {
 		return nil, nil
 	}
@@ -358,6 +359,7 @@ func (state *IndexState) FindIndex(index int) ([]byte, error) {
 					return nil, err
 				}
 				state.found = append(state.found, val)
+				state.position = 0
 				if index == 0 {
 					return val, err
 				}
