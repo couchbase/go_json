@@ -335,10 +335,8 @@ outer:
 		case scanContinue:
 			if scan.useInts {
 
-				// accumulate the current int64 up to 19 digits
-				if oldOffset-start < 19 {
-					tot = tot*10 + int64(c-'0')
-				} else {
+				tot = tot*10 + int64(c-'0')
+				if tot < 0 { // exceeded int64 capacity ?
 					scan.useInts = false
 				}
 			}
