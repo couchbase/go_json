@@ -781,9 +781,7 @@ func (d *decodeState) convertNumber(s string) (interface{}, error) {
 
 	if d.scan.useInts {
 		i, err := strconv.ParseInt(src, 10, 64)
-		if err == nil &&
-			((i > math.MinInt64 && i < math.MaxInt64) ||
-				strconv.FormatInt(i, 10) == src) {
+		if err == nil && i > math.MinInt64 {
 			return i, nil
 		}
 	}
