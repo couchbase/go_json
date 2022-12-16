@@ -423,6 +423,7 @@ func IndexFindWithState(state *IndexState, index int) ([]byte, error) {
 					return nil, err
 				}
 				state.found = append(state.found, val)
+				state.position = 0
 				if index == 0 {
 					return val, err
 				}
