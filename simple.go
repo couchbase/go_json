@@ -335,9 +335,11 @@ outer:
 		case scanContinue:
 			if scan.useInts {
 
-				tot = tot*10 + int64(c-'0')
-				if tot < 0 { // exceeded int64 capacity ?
+				nt := tot*10 + int64(c-'0')
+				if nt < tot { // exceeded int64 capacity ?
 					scan.useInts = false
+				} else {
+					tot = nt
 				}
 			}
 		case scanError:
