@@ -98,7 +98,9 @@ func SetKeyState(state *KeyState, data []byte) {
 
 // release state
 func (state *KeyState) Release() {
+	values := state.scan.values[0:0]
 	state.scan = scanner{}
+	state.scan.values =  values
 	state.found = nil
 }
 
@@ -177,6 +179,11 @@ func SetScanState(state *ScanState, data []byte) {
 		setScanner(&state.scan, data)
 		state.scan.reset()
 	}
+}
+
+// mark ScanState as using an immutable buffer
+func (state *ScanState) SetImmutable() {
+	state.scan.setImmutable()
 }
 
 // release state

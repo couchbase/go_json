@@ -25,13 +25,22 @@ func SimpleUnmarshal(data []byte) (interface{}, error) {
 	return unmarshaledValue(&scan)
 }
 
+// as above but avoiding string copies - the input buffer must be guaranteed to be immutable
+func SimpleUnmarshalImmutable(data []byte) (interface{}, error) {
+	var scan scanner
+
+	setScanner(&scan, data)
+	scan.reset()
+	scan.setImmutable()
+	return unmarshaledValue(&scan)
+}
+
 // this is just to mark that there is no current value
 type unsetType int
 
 const unsetVal = unsetType(iota)
 
 func unmarshaledValue(scan *scanner) (interface{}, error) {
-	var values []interface{}
 	var keys []string
 	var current interface{}
 	var err error
@@ -58,7 +67,7 @@ outer:
 				if err != nil {
 					return nil, err
 				}
-				current = string(bytes)
+				current = scan.toString(bytes)
 
 			// the value is presumed here, and checked with the next states
 			case 't':
@@ -77,7 +86,7 @@ outer:
 			}
 		case scanBeginArray:
 			level++
-			values = append(values, make([]interface{}, 0, 10))
+			scan.values = append(scan.values, make([]interface{}, 0, 10))
 
 			// current will never be returned set to unsetVal - the error will be caught earlier
 			current = unsetVal
@@ -85,19 +94,19 @@ outer:
 			if level == 0 {
 				return nil, fmt.Errorf("Unexpected array value, not in array")
 			}
-			top, ok := values[level-1].([]interface{})
+			top, ok := scan.values[level-1].([]interface{})
 			if !ok {
 				return nil, fmt.Errorf("Unexpected array value, not in array")
 			}
 			top = append(top, current)
-			values[level-1] = top
+			scan.values[level-1] = top
 		case scanEndArray:
 
 			// there's no scanArrayValue before scanEndArray
 			if level == 0 {
 				return nil, fmt.Errorf("Unexpected array value, not in array")
 			}
-			top, ok := values[level-1].([]interface{})
+			top, ok := scan.values[level-1].([]interface{})
 			if !ok {
 				return nil, fmt.Errorf("Unexpected array value, not in array")
 			}
@@ -108,10 +117,10 @@ outer:
 			}
 			current = top
 			level--
-			values = values[:level]
+			scan.values = scan.values[:level]
 		case scanBeginObject:
 			level++
-			values = append(values, make(map[string]interface{}, 10))
+			scan.values = append(scan.values, make(map[string]interface{}, 10))
 			current = unsetVal
 			keys = append(keys, "")
 		case scanObjectKey:
@@ -128,7 +137,7 @@ outer:
 			if level == 0 {
 				return nil, fmt.Errorf("Unexpected object value, not in object")
 			}
-			top, ok := values[level-1].(map[string]interface{})
+			top, ok := scan.values[level-1].(map[string]interface{})
 			if !ok {
 				return nil, fmt.Errorf("Unexpected object value, not in object")
 			}
@@ -140,7 +149,7 @@ outer:
 			if level == 0 {
 				return nil, fmt.Errorf("Unexpected object value, not in object")
 			}
-			top, ok := values[level-1].(map[string]interface{})
+			top, ok := scan.values[level-1].(map[string]interface{})
 			if !ok {
 				return nil, fmt.Errorf("Unexpected object value, not in object")
 			}
@@ -152,7 +161,7 @@ outer:
 			}
 			current = top
 			level--
-			values = values[:level]
+			scan.values = scan.values[:level]
 			keys = keys[:len(keys)-1]
 		case scanSkipSpace:
 		case scanContinue:
@@ -435,6 +444,7 @@ func nextUnmarshalledValue(scan *scanner) (interface{}, error) {
 	scan = setScanner(scan, scan.data)
 	scan.reset()
 	scan.offset = saveScan.offset
+	scan.toString = saveScan.toString
 
 	// avoid needless stateEndTop error, since we are scanning mid scan
 	scan.checkTop = false

@@ -15,6 +15,7 @@ package json
 
 import (
 	"strconv"
+	"unsafe"
 )
 
 // checkValid verifies that data is valid JSON-encoded data.
@@ -102,6 +103,12 @@ type scanner struct {
 	data   []byte
 	offset int
 
+	// []byte to string conversion function
+	toString func([]byte) string
+
+	// stack of nested data
+	values []interface{}
+
 	// The step is a func to be called to execute the next transition.
 	step func(*scanner, byte) int
 
@@ -169,13 +176,27 @@ func (s *scanner) reset() {
 	s.endTop = false
 }
 
+// string conversion
+func standardToString(b []byte) string {
+	return string(b)
+}
+
+func fastToString(b []byte) string {
+	return *(*string)(unsafe.Pointer(&b))
+}
+
 // Sets up a scanner
 func setScanner(scan *scanner, data []byte) *scanner {
 	*scan = scanner{}
 	scan.offset = 0
 	scan.data = data
 	scan.checkTop = true
+	scan.toString = standardToString
 	return scan
+}
+
+func (scan *scanner) setImmutable() {
+	scan.toString = fastToString
 }
 
 // eof tells the scanner that the end of input has been reached.
