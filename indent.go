@@ -4,7 +4,10 @@
 
 package json
 
-import "bytes"
+import (
+	"bytes"
+	"io"
+)
 
 // Compact appends to dst the JSON-encoded src with
 // insignificant space characters elided.
@@ -158,4 +161,82 @@ func Indent(dst *bytes.Buffer, src []byte, prefix, indent string) error {
 		return scan.err
 	}
 	return nil
+}
+
+func IndentWriter(dst io.Writer, src []byte, prefix, indent string) error {
+	var sc scanner
+
+	scan := setScanner(&sc, src)
+	scan.reset()
+	needIndent := false
+	depth := 0
+
+	l := len(src)
+	for {
+		if scan.offset >= l {
+			break
+		}
+		c := scan.data[scan.offset]
+		oldOffset := scan.offset
+		scan.offset++
+		v := scan.step(scan, c)
+		if v == scanSkipSpace {
+			continue
+		}
+		if v == scanError {
+			break
+		}
+		if needIndent && v != scanEndObject && v != scanEndArray {
+			needIndent = false
+			depth++
+			newlineWriter(dst, prefix, indent, depth)
+		}
+
+		// Emit semantically uninteresting bytes
+		// (in particular, punctuation in strings) unmodified.
+		if v == scanContinue {
+			dst.Write(scan.data[oldOffset:scan.offset])
+			continue
+		}
+
+		// Add spacing around real punctuation.
+		switch c {
+		case '{', '[':
+			// delay indent so that empty object and array are formatted as {} and [].
+			needIndent = true
+			dst.Write([]byte{c})
+
+		case ',':
+			dst.Write([]byte{c})
+			newlineWriter(dst, prefix, indent, depth)
+
+		case ':':
+			dst.Write([]byte{c, ' '})
+
+		case '}', ']':
+			if needIndent {
+				// suppress indent in empty object/array
+				needIndent = false
+			} else {
+				depth--
+				newlineWriter(dst, prefix, indent, depth)
+			}
+			dst.Write([]byte{c})
+
+		default:
+			dst.Write([]byte{c})
+		}
+	}
+	if scan.eof() == scanError {
+		return scan.err
+	}
+	return nil
+}
+
+func newlineWriter(dst io.Writer, prefix, indent string, depth int) {
+	dst.Write([]byte{'\n'})
+	dst.Write([]byte(prefix))
+	for i := 0; i < depth; i++ {
+		dst.Write([]byte(indent))
+	}
 }
