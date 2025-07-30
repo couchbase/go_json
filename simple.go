@@ -11,6 +11,7 @@ package json
 
 import (
 	"fmt"
+	"math"
 	"reflect"
 	"strconv"
 	"unicode/utf8"
@@ -313,6 +314,8 @@ func nextLiteral(scan *scanner) ([]byte, error) {
 
 }
 
+const _MaxInt64Over10 = math.MaxInt64 / 10
+
 // nextNumber scans the data and grabs the next number, in one pass
 func nextNumber(scan *scanner, c byte) (interface{}, error) {
 	isNeg := c == '-'
@@ -323,6 +326,10 @@ func nextNumber(scan *scanner, c byte) (interface{}, error) {
 
 	// first byte has already been consumed
 	start := scan.offset - 1
+	numStart := start
+	if isNeg {
+		numStart++
+	}
 
 outer:
 	for scan.offset < len(scan.data) {
@@ -334,12 +341,23 @@ outer:
 		switch newOp {
 		case scanContinue:
 			if scan.useInts {
-
-				nt := tot*10 + int64(c-'0')
-				if nt < tot { // exceeded int64 capacity ?
-					scan.useInts = false
+				if tot > 0 && tot < _MaxInt64Over10 {
+					// if we know it'll be < MaxInt64
+					// note we use '<' instead of '<=' since if it's == it's
+					// not always < MaxInt64 (depending on next digit)
+					tot = tot*10 + int64(c-'0')
+				} else if oldOffset-numStart < 19 {
+					// otherwise, make sure we don't go over MaxInt64
+					src := string(scan.data[start:scan.offset])
+					i, err := strconv.ParseInt(src, 10, 64)
+					if err == nil && i >= math.MinInt64 && i <= math.MaxInt64 {
+						tot = i
+						isNeg = false // '-' sign alredy parsed
+					} else {
+						scan.useInts = false
+					}
 				} else {
-					tot = nt
+					scan.useInts = false
 				}
 			}
 		case scanError:
