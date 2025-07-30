@@ -168,6 +168,48 @@ var simpleUnmarshalTests = []unmarshalTest{
 		in:  "\"hello\xed\xa0\x80\xed\xb0\x80world\"",
 		out: "hello\ufffd\ufffd\ufffd\ufffd\ufffd\ufffdworld",
 	},
+
+	// large numbers
+	{
+		// MB-51629
+		in:  "-5106534569952410475",
+		out: int64(-5106534569952410475),
+	},
+	{
+		// MB-54941
+		in:  "18446744073709551610",
+		out: float64(18446744073709552000),
+	},
+	{
+		// MB-67849
+		in:  "23456789012345678901",
+		out: float64(23456789012345680000),
+	},
+	{
+		// MaxInt64
+		in:  "9223372036854775807",
+		out: int64(9223372036854775807),
+	},
+	{
+		// MaxInt64 + 1
+		in:  "9223372036854775808",
+		out: float64(9223372036854775807),
+	},
+	{
+		// MinInt64
+		in:  "-9223372036854775808",
+		out: int64(-9223372036854775808),
+	},
+	{
+		// MinInt64 - 1
+		in:  "-9223372036854775809",
+		out: float64(-9223372036854775808),
+	},
+	{
+		// MinInt64 * 10
+		in:  "-92233720368547758080",
+		out: float64(-92233720368547760000),
+	},
 }
 
 func TestSimpleUnmarshal(t *testing.T) {
