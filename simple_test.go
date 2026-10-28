@@ -45,7 +45,7 @@ func TestSimpleUnmarshalInterface(t *testing.T) {
 		t.Fatalf("SimpleUnmarshal: %v", err)
 	}
 
-	m, ok := v.(map[string]interface{})
+	m, ok := v.(map[string]any)
 	if !ok {
 		t.Fatalf("SimpleUnmarshal did not find a map")
 	}
@@ -69,8 +69,8 @@ var simpleUnmarshalTests = []unmarshalTest{
 	{in: `"invalid: \uD834x\uDD1E"`, out: "invalid: \uFFFDx\uFFFD"},
 	{in: "null", out: nil},
 
-	{in: `{"X": [1,2,3], "Y": 4}`, out: map[string]interface{}{"X": []interface{}{int64(1), int64(2), int64(3)}, "Y": int64(4)}},
-	{in: `{"x": 1}`, out: map[string]interface{}{"x": int64(1)}},
+	{in: `{"X": [1,2,3], "Y": 4}`, out: map[string]any{"X": []any{int64(1), int64(2), int64(3)}, "Y": int64(4)}},
+	{in: `{"x": 1}`, out: map[string]any{"x": int64(1)}},
 
 	// raw values with whitespace
 	{in: "\n true ", out: true},
@@ -110,33 +110,33 @@ var simpleUnmarshalTests = []unmarshalTest{
 	{in: " \"string\" \x01", err: &SyntaxError{"invalid character '\\x01' after top-level value", 11}},
 
 	// array tests
-	{in: `[1, 2, 3]`, out: []interface{}{int64(1), int64(2), int64(3)}},
+	{in: `[1, 2, 3]`, out: []any{int64(1), int64(2), int64(3)}},
 
 	// empty array to interface test
-	{in: `[]`, out: []interface{}{}},
-	{in: `{"T":[]}`, out: map[string]interface{}{"T": []interface{}{}}},
-	{in: `{"T":null}`, out: map[string]interface{}{"T": interface{}(nil)}},
+	{in: `[]`, out: []any{}},
+	{in: `{"T":[]}`, out: map[string]any{"T": []any{}}},
+	{in: `{"T":null}`, out: map[string]any{"T": any(nil)}},
 
 	// integer-keyed map test
 	{
 		in:  `{"-1":"a","0":"b","1":"c"}`,
-		out: map[string]interface{}{"-1": "a", "0": "b", "1": "c"},
+		out: map[string]any{"-1": "a", "0": "b", "1": "c"},
 	},
 	{
 		in:  `{"0":"a","10":"c","9":"b"}`,
-		out: map[string]interface{}{"0": "a", "9": "b", "10": "c"},
+		out: map[string]any{"0": "a", "9": "b", "10": "c"},
 	},
 	{
 		in:  `{"-9223372036854775808":"min","9223372036854775807":"max"}`,
-		out: map[string]interface{}{"-9223372036854775808": "min", "9223372036854775807": "max"},
+		out: map[string]any{"-9223372036854775808": "min", "9223372036854775807": "max"},
 	},
 	{
 		in:  `{"18446744073709551615":"max"}`,
-		out: map[string]interface{}{"18446744073709551615": "max"},
+		out: map[string]any{"18446744073709551615": "max"},
 	},
 	{
 		in:  `{"0":false,"10":true}`,
-		out: map[string]interface{}{"0": false, "10": true},
+		out: map[string]any{"0": false, "10": true},
 	},
 
 	// invalid UTF-8 is coerced to valid UTF-8.

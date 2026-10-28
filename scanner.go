@@ -107,7 +107,7 @@ type scanner struct {
 	toString func([]byte) string
 
 	// stack of nested data
-	values []interface{}
+	values []any
 
 	// The step is a func to be called to execute the next transition.
 	step func(*scanner, byte) int

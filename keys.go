@@ -100,7 +100,7 @@ func SetKeyState(state *KeyState, data []byte) {
 func (state *KeyState) Release() {
 	values := state.scan.values[0:0]
 	state.scan = scanner{}
-	state.scan.values =  values
+	state.scan.values = values
 	state.found = nil
 }
 
@@ -250,7 +250,7 @@ func (state *ScanState) NextValue() ([]byte, error) {
 }
 
 // retrieves and unmarshals the value associated with current key
-func (state *ScanState) NextUnmarshaledValue() (interface{}, error) {
+func (state *ScanState) NextUnmarshaledValue() (any, error) {
 	if state.step == scanObjectKey && state.level == 1 {
 		val, err := nextUnmarshalledValue(&state.scan)
 		state.step = scanObjectValue

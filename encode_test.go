@@ -24,8 +24,8 @@ type Optionals struct {
 	Slr []string `json:"slr,random"`
 	Slo []string `json:"slo,omitempty"`
 
-	Mr map[string]interface{} `json:"mr"`
-	Mo map[string]interface{} `json:",omitempty"`
+	Mr map[string]any `json:"mr"`
+	Mo map[string]any `json:",omitempty"`
 
 	Fr float64 `json:"fr"`
 	Fo float64 `json:"fo,omitempty"`
@@ -37,7 +37,7 @@ type Optionals struct {
 	Uo uint `json:"uo,omitempty"`
 
 	Str struct{} `json:"str"`
-	Sto struct{} `json:"sto,omitempty"`
+	Sto struct{} `json:"sto"`
 }
 
 var optionalsExpected = `{
@@ -55,8 +55,8 @@ var optionalsExpected = `{
 func TestOmitEmpty(t *testing.T) {
 	var o Optionals
 	o.Sw = "something"
-	o.Mr = map[string]interface{}{}
-	o.Mo = map[string]interface{}{}
+	o.Mr = map[string]any{}
+	o.Mo = map[string]any{}
 
 	got, err := MarshalIndent(&o, "", " ")
 	if err != nil {
@@ -128,7 +128,7 @@ func TestEncodeRenamedByteSlice(t *testing.T) {
 	}
 }
 
-var unsupportedValues = []interface{}{
+var unsupportedValues = []any{
 	math.NaN(),
 	math.Inf(-1),
 	math.Inf(1),
@@ -558,7 +558,7 @@ type textint int
 
 func (i textint) MarshalText() ([]byte, error) { return tenc(`TI:%d`, i) }
 
-func tenc(format string, a ...interface{}) ([]byte, error) {
+func tenc(format string, a ...any) ([]byte, error) {
 	var buf bytes.Buffer
 	fmt.Fprintf(&buf, format, a...)
 	return buf.Bytes(), nil
@@ -567,7 +567,7 @@ func tenc(format string, a ...interface{}) ([]byte, error) {
 // Issue 13783
 func TestEncodeBytekind(t *testing.T) {
 	testdata := []struct {
-		data interface{}
+		data any
 		want string
 	}{
 		{byte(7), "7"},

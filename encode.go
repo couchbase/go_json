@@ -15,6 +15,7 @@ import (
 	"encoding"
 	"encoding/base64"
 	"fmt"
+	"maps"
 	"math"
 	"reflect"
 	"runtime"
@@ -140,7 +141,7 @@ import (
 // JSON cannot represent cyclic data structures and Marshal does not
 // handle them. Passing cyclic structures to Marshal will result in
 // an infinite recursion.
-func Marshal(v interface{}) ([]byte, error) {
+func Marshal(v any) ([]byte, error) {
 	e := &encodeState{}
 	err := e.marshal(v, encOpts{escapeHTML: true})
 	if err != nil {
@@ -150,7 +151,7 @@ func Marshal(v interface{}) ([]byte, error) {
 }
 
 // MarshalNoEscape is like Marshal, but does not escape <, &, >
-func MarshalNoEscape(v interface{}) ([]byte, error) {
+func MarshalNoEscape(v any) ([]byte, error) {
 	e := &encodeState{}
 	err := e.marshal(v, encOpts{escapeHTML: false})
 	if err != nil {
@@ -160,7 +161,7 @@ func MarshalNoEscape(v interface{}) ([]byte, error) {
 }
 
 // MarshalNoEscapeToBuffer is like Marshal, but does not escape <, &, >, and writes to a buffer
-func MarshalNoEscapeToBuffer(v interface{}, buf *bytes.Buffer) error {
+func MarshalNoEscapeToBuffer(v any, buf *bytes.Buffer) error {
 	e := &encodeState{Buffer: *buf}
 	err := e.marshal(v, encOpts{escapeHTML: false})
 	*buf = e.Buffer
@@ -186,7 +187,7 @@ func MarshalStringToBuffer(s string, buf *bytes.Buffer) error {
 }
 
 // MarshalIndent is like Marshal but applies Indent to format the output.
-func MarshalIndent(v interface{}, prefix, indent string) ([]byte, error) {
+func MarshalIndent(v any, prefix, indent string) ([]byte, error) {
 	b, err := Marshal(v)
 	if err != nil {
 		return nil, err
@@ -290,7 +291,7 @@ type encodeState struct {
 	scratch      [64]byte
 }
 
-func (e *encodeState) marshal(v interface{}, opts encOpts) (err error) {
+func (e *encodeState) marshal(v any, opts encOpts) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			if _, ok := r.(runtime.Error); ok {
@@ -332,7 +333,7 @@ func isEmptyValue(v reflect.Value) bool {
 		return v.Uint() == 0
 	case reflect.Float32, reflect.Float64:
 		return v.Float() == 0
-	case reflect.Interface, reflect.Ptr:
+	case reflect.Interface, reflect.Pointer:
 		return v.IsNil()
 	}
 	return false
@@ -390,8 +391,8 @@ func typeEncoder(t reflect.Type) encoderFunc {
 }
 
 var (
-	marshalerType     = reflect.TypeOf(new(Marshaler)).Elem()
-	textMarshalerType = reflect.TypeOf(new(encoding.TextMarshaler)).Elem()
+	marshalerType     = reflect.TypeFor[Marshaler]()
+	textMarshalerType = reflect.TypeFor[encoding.TextMarshaler]()
 )
 
 // newTypeEncoder constructs an encoderFunc for a type.
@@ -400,8 +401,8 @@ func newTypeEncoder(t reflect.Type, allowAddr bool) encoderFunc {
 	if t.Implements(marshalerType) {
 		return marshalerEncoder
 	}
-	if t.Kind() != reflect.Ptr && allowAddr {
-		if reflect.PtrTo(t).Implements(marshalerType) {
+	if t.Kind() != reflect.Pointer && allowAddr {
+		if reflect.PointerTo(t).Implements(marshalerType) {
 			return newCondAddrEncoder(addrMarshalerEncoder, newTypeEncoder(t, false))
 		}
 	}
@@ -409,8 +410,8 @@ func newTypeEncoder(t reflect.Type, allowAddr bool) encoderFunc {
 	if t.Implements(textMarshalerType) {
 		return textMarshalerEncoder
 	}
-	if t.Kind() != reflect.Ptr && allowAddr {
-		if reflect.PtrTo(t).Implements(textMarshalerType) {
+	if t.Kind() != reflect.Pointer && allowAddr {
+		if reflect.PointerTo(t).Implements(textMarshalerType) {
 			return newCondAddrEncoder(addrTextMarshalerEncoder, newTypeEncoder(t, false))
 		}
 	}
@@ -438,7 +439,7 @@ func newTypeEncoder(t reflect.Type, allowAddr bool) encoderFunc {
 		return newSliceEncoder(t)
 	case reflect.Array:
 		return newArrayEncoder(t)
-	case reflect.Ptr:
+	case reflect.Pointer:
 		return newPtrEncoder(t)
 	default:
 		return unsupportedTypeEncoder
@@ -450,7 +451,7 @@ func invalidValueEncoder(e *encodeState, v reflect.Value, _ encOpts) {
 }
 
 func marshalerEncoder(e *encodeState, v reflect.Value, opts encOpts) {
-	if v.Kind() == reflect.Ptr && v.IsNil() {
+	if v.Kind() == reflect.Pointer && v.IsNil() {
 		e.WriteString("null")
 		return
 	}
@@ -483,7 +484,7 @@ func addrMarshalerEncoder(e *encodeState, v reflect.Value, _ encOpts) {
 }
 
 func textMarshalerEncoder(e *encodeState, v reflect.Value, opts encOpts) {
-	if v.Kind() == reflect.Ptr && v.IsNil() {
+	if v.Kind() == reflect.Pointer && v.IsNil() {
 		e.WriteString("null")
 		return
 	}
@@ -727,7 +728,7 @@ func (se *sliceEncoder) encode(e *encodeState, v reflect.Value, opts encOpts) {
 func newSliceEncoder(t reflect.Type) encoderFunc {
 	// Byte slices get special treatment; arrays don't.
 	if t.Elem().Kind() == reflect.Uint8 {
-		p := reflect.PtrTo(t.Elem())
+		p := reflect.PointerTo(t.Elem())
 		if !p.Implements(marshalerType) && !p.Implements(textMarshalerType) {
 			return encodeByteSlice
 		}
@@ -743,7 +744,7 @@ type arrayEncoder struct {
 func (ae *arrayEncoder) encode(e *encodeState, v reflect.Value, opts encOpts) {
 	e.WriteByte('[')
 	n := v.Len()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if i > 0 {
 			e.WriteByte(',')
 		}
@@ -814,7 +815,7 @@ func isValidTag(s string) bool {
 
 func fieldByIndex(v reflect.Value, index []int) reflect.Value {
 	for _, i := range index {
-		if v.Kind() == reflect.Ptr {
+		if v.Kind() == reflect.Pointer {
 			if v.IsNil() {
 				return reflect.Value{}
 			}
@@ -827,7 +828,7 @@ func fieldByIndex(v reflect.Value, index []int) reflect.Value {
 
 func typeByIndex(t reflect.Type, index []int) reflect.Type {
 	for _, i := range index {
-		if t.Kind() == reflect.Ptr {
+		if t.Kind() == reflect.Pointer {
 			t = t.Elem()
 		}
 		t = t.Field(i).Type
@@ -1133,7 +1134,7 @@ func typeFields(t reflect.Type) []field {
 				index[len(f.index)] = i
 
 				ft := sf.Type
-				if ft.Name() == "" && ft.Kind() == reflect.Ptr {
+				if ft.Name() == "" && ft.Kind() == reflect.Pointer {
 					// Follow pointer.
 					ft = ft.Elem()
 				}
@@ -1281,9 +1282,7 @@ func cachedTypeFields(t reflect.Type) []field {
 	fieldCache.mu.Lock()
 	m, _ = fieldCache.value.Load().(map[reflect.Type][]field)
 	newM := make(map[reflect.Type][]field, len(m)+1)
-	for k, v := range m {
-		newM[k] = v
-	}
+	maps.Copy(newM, m)
 	newM[t] = f
 	fieldCache.value.Store(newM)
 	fieldCache.mu.Unlock()

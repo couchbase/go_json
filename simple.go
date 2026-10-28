@@ -18,7 +18,7 @@ import (
 )
 
 // simple and fast decoder skipping the whole Reflect and UnmarshalJSON machinery
-func SimpleUnmarshal(data []byte) (interface{}, error) {
+func SimpleUnmarshal(data []byte) (any, error) {
 	var scan scanner
 
 	setScanner(&scan, data)
@@ -27,7 +27,7 @@ func SimpleUnmarshal(data []byte) (interface{}, error) {
 }
 
 // as above but avoiding string copies - the input buffer must be guaranteed to be immutable
-func SimpleUnmarshalImmutable(data []byte) (interface{}, error) {
+func SimpleUnmarshalImmutable(data []byte) (any, error) {
 	var scan scanner
 
 	setScanner(&scan, data)
@@ -41,9 +41,9 @@ type unsetType int
 
 const unsetVal = unsetType(iota)
 
-func unmarshaledValue(scan *scanner) (interface{}, error) {
+func unmarshaledValue(scan *scanner) (any, error) {
 	var keys []string
-	var current interface{}
+	var current any
 	var err error
 
 	level := 0
@@ -87,7 +87,7 @@ outer:
 			}
 		case scanBeginArray:
 			level++
-			scan.values = append(scan.values, make([]interface{}, 0, 10))
+			scan.values = append(scan.values, make([]any, 0, 10))
 
 			// current will never be returned set to unsetVal - the error will be caught earlier
 			current = unsetVal
@@ -95,7 +95,7 @@ outer:
 			if level == 0 {
 				return nil, fmt.Errorf("Unexpected array value, not in array")
 			}
-			top, ok := scan.values[level-1].([]interface{})
+			top, ok := scan.values[level-1].([]any)
 			if !ok {
 				return nil, fmt.Errorf("Unexpected array value, not in array")
 			}
@@ -107,7 +107,7 @@ outer:
 			if level == 0 {
 				return nil, fmt.Errorf("Unexpected array value, not in array")
 			}
-			top, ok := scan.values[level-1].([]interface{})
+			top, ok := scan.values[level-1].([]any)
 			if !ok {
 				return nil, fmt.Errorf("Unexpected array value, not in array")
 			}
@@ -121,7 +121,7 @@ outer:
 			scan.values = scan.values[:level]
 		case scanBeginObject:
 			level++
-			scan.values = append(scan.values, make(map[string]interface{}, 10))
+			scan.values = append(scan.values, make(map[string]any, 10))
 			current = unsetVal
 			keys = append(keys, "")
 		case scanObjectKey:
@@ -138,7 +138,7 @@ outer:
 			if level == 0 {
 				return nil, fmt.Errorf("Unexpected object value, not in object")
 			}
-			top, ok := scan.values[level-1].(map[string]interface{})
+			top, ok := scan.values[level-1].(map[string]any)
 			if !ok {
 				return nil, fmt.Errorf("Unexpected object value, not in object")
 			}
@@ -150,7 +150,7 @@ outer:
 			if level == 0 {
 				return nil, fmt.Errorf("Unexpected object value, not in object")
 			}
-			top, ok := scan.values[level-1].(map[string]interface{})
+			top, ok := scan.values[level-1].(map[string]any)
 			if !ok {
 				return nil, fmt.Errorf("Unexpected object value, not in object")
 			}
@@ -231,10 +231,7 @@ func nextLiteral(scan *scanner) ([]byte, error) {
 		scan.offset++
 	}
 
-	usableCap := (scan.offset - start) * 2
-	if usableCap < 64 {
-		usableCap = 64
-	}
+	usableCap := max((scan.offset-start)*2, 64)
 	literal := make([]byte, usableCap)
 	copy(literal, scan.data[start:scan.offset])
 	out := scan.offset - start
@@ -331,7 +328,7 @@ func nextLiteral(scan *scanner) ([]byte, error) {
 const _MaxInt64Over10 = math.MaxInt64 / 10
 
 // nextNumber scans the data and grabs the next number, in one pass
-func nextNumber(scan *scanner, c byte) (interface{}, error) {
+func nextNumber(scan *scanner, c byte) (any, error) {
 	isNeg := c == '-'
 	tot := int64(0)
 	if !isNeg {
@@ -394,7 +391,7 @@ outer:
 
 	f, err := strconv.ParseFloat(src, 64)
 	if err != nil {
-		return nil, &UnmarshalTypeError{"number " + src, reflect.TypeOf(0.0), int64(scan.offset)}
+		return nil, &UnmarshalTypeError{"number " + src, reflect.TypeFor[float64](), int64(scan.offset)}
 	}
 	return f, nil
 }
@@ -458,7 +455,7 @@ func nextScanValue(scan *scanner) ([]byte, error) {
 	return scan.data[start:], nil
 }
 
-func nextUnmarshalledValue(scan *scanner) (interface{}, error) {
+func nextUnmarshalledValue(scan *scanner) (any, error) {
 	var saveScan scanner
 
 	// avoid cost of scanner allocation

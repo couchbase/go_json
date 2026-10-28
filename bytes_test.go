@@ -2,7 +2,7 @@ package json
 
 import (
 	"compress/gzip"
-	"io/ioutil"
+	"io"
 	"math/rand"
 	"os"
 	"reflect"
@@ -13,9 +13,9 @@ import (
 
 var ptests = []struct {
 	path string
-	exp  interface{}
+	exp  any
 }{
-	{"/foo", []interface{}{"bar", "baz"}},
+	{"/foo", []any{"bar", "baz"}},
 	{"/foo/0", "bar"},
 	{"/", int64(0)},
 	{"/a~1b", int64(1)},
@@ -117,7 +117,7 @@ func TestPointerMissing(t *testing.T) {
 
 func TestManyPointers(t *testing.T) {
 	pointers := []string{}
-	exp := map[string]interface{}{}
+	exp := map[string]any{}
 	for _, test := range ptests {
 		pointers = append(pointers, test.path)
 		exp[test.path] = test.exp
@@ -128,9 +128,9 @@ func TestManyPointers(t *testing.T) {
 		t.Fatalf("Error finding many: %v", err)
 	}
 
-	got := map[string]interface{}{}
+	got := map[string]any{}
 	for k, v := range rv {
-		var val interface{}
+		var val any
 		err = Unmarshal(v, &val)
 		if err != nil {
 			t.Fatalf("Error unmarshaling %s: %v", v, err)
@@ -187,7 +187,7 @@ func TestPointer(t *testing.T) {
 
 	for _, test := range ptests {
 		got, err := Find([]byte(objSrc), test.path)
-		var val interface{}
+		var val any
 		if err == nil {
 			err = Unmarshal([]byte(got), &val)
 		}
@@ -229,7 +229,7 @@ func TestPointerCoder(t *testing.T) {
 }
 
 func TestCBugg406(t *testing.T) {
-	data, err := ioutil.ReadFile("testdata/pools.json")
+	data, err := os.ReadFile("testdata/pools.json")
 	if err != nil {
 		t.Fatalf("Error reading pools data: %v", err)
 	}
@@ -357,7 +357,7 @@ func TestGrokLiteral(t *testing.T) {
 }
 
 func TestSerieslySample(t *testing.T) {
-	data, err := ioutil.ReadFile("testdata/serieslysample.json")
+	data, err := os.ReadFile("testdata/serieslysample.json")
 	if err != nil {
 		t.Fatalf("Error opening sample file: %v", err)
 	}
@@ -384,7 +384,7 @@ func TestSerieslySample(t *testing.T) {
 }
 
 func TestSerieslySampleMany(t *testing.T) {
-	data, err := ioutil.ReadFile("testdata/serieslysample.json")
+	data, err := os.ReadFile("testdata/serieslysample.json")
 	if err != nil {
 		t.Fatalf("Error opening sample file: %v", err)
 	}
@@ -405,7 +405,7 @@ func TestSerieslySampleMany(t *testing.T) {
 }
 
 func TestSerieslySampleList(t *testing.T) {
-	data, err := ioutil.ReadFile("testdata/serieslysample.json")
+	data, err := os.ReadFile("testdata/serieslysample.json")
 	if err != nil {
 		t.Fatalf("Error opening sample file: %v", err)
 	}
@@ -421,7 +421,7 @@ func TestSerieslySampleList(t *testing.T) {
 }
 
 func Test357ListPointers(t *testing.T) {
-	data, err := ioutil.ReadFile("testdata/357.json")
+	data, err := os.ReadFile("testdata/357.json")
 	if err != nil {
 		t.Fatalf("Error beer-sample brewery 357 data: %v", err)
 	}
@@ -495,7 +495,7 @@ func init() {
 	if err != nil {
 		panic(err)
 	}
-	data, err := ioutil.ReadAll(gz)
+	data, err := io.ReadAll(gz)
 	if err != nil {
 		panic(err)
 	}
@@ -587,7 +587,7 @@ type chars string
 func (c chars) Generate(rand *rand.Rand, _ int) reflect.Value {
 	size := rand.Intn(128)
 	var o []byte
-	for i := 0; i < size; i++ {
+	for range size {
 		o = append(o, alphabet[rand.Intn(len(alphabet))])
 	}
 	s := chars(escape(string(o), nil))
@@ -620,7 +620,7 @@ func BenchmarkLargeMap(b *testing.B) {
 	b.SetBytes(int64(len(inputJSON)))
 
 	for i := 0; i < b.N; i++ {
-		m := map[string]interface{}{}
+		m := map[string]any{}
 		err := Unmarshal(inputJSON, &m)
 		if err != nil {
 			b.Fatalf("Error parsing JSON: %v", err)

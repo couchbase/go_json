@@ -30,12 +30,12 @@ var keysTests = []struct {
 var scanTests = []struct {
 	field string
 	res   string
-	val   interface{}
+	val   any
 }{
 	{"f1", "\"1\"", "1"},
 	{"f2", "2", int64(2)},
-	{"f3", "{ \"a\": 3 }", map[string]interface{}{"a": int64(3)}},
-	{"f4", "[ 4 ]", []interface{}{int64(4)}},
+	{"f3", "{ \"a\": 3 }", map[string]any{"a": int64(3)}},
+	{"f4", "[ 4 ]", []any{int64(4)}},
 	{"f1234567890123456789012345678901234567890", "33", int64(33)},
 	{"f5", "5", int64(5)},
 }
@@ -300,10 +300,10 @@ func TestScanKeys(t *testing.T) {
 
 var keytests = []struct {
 	path string
-	exp  interface{}
+	exp  any
 }{
 	{"", obj},
-	{"foo", []interface{}{"bar", "baz"}},
+	{"foo", []any{"bar", "baz"}},
 	{"", int64(0)},
 	{"a~1b", int64(1)},
 	{"c%d", int64(2)},
@@ -426,7 +426,7 @@ func BenchmarkDecodeMoreCode(b *testing.B) {
 	}
 	b.SetBytes(int64(len(codeJSON)))
 	for i := 0; i < b.N; i++ {
-		var val interface{}
+		var val any
 
 		decoder := NewDecoder(bytes.NewReader(codeJSON))
 
@@ -458,7 +458,7 @@ func BenchmarkDecodeMoreBig(b *testing.B) {
 	}
 	b.SetBytes(int64(len(jsonBig)))
 	for i := 0; i < b.N; i++ {
-		var val interface{}
+		var val any
 
 		decoder := NewDecoder(bytes.NewReader(jsonBig))
 

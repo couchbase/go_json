@@ -29,7 +29,7 @@ func unescape(s string) string {
 	t := make([]byte, len(s)-n+1) // remove one char per ~
 	w := 0
 	start := 0
-	for i := 0; i < n; i++ {
+	for range n {
 		j := start + strings.Index(s[start:], "~")
 		w += copy(t[w:], s[start:j])
 		if len(s) < j+2 {
@@ -106,7 +106,7 @@ func grokLiteral(b []byte) string {
 // FindDecode finds an object by JSONPointer path and then decode the
 // result into a user-specified object.  Errors if a properly
 // formatted JSON document can't be found at the given path.
-func FindDecode(data []byte, path string, into interface{}) error {
+func FindDecode(data []byte, path string, into any) error {
 	d, err := Find(data, path)
 	if err != nil {
 		return err

@@ -77,15 +77,14 @@ import (
 //
 // The JSON null value unmarshals into an interface, map, pointer, or slice
 // by setting that Go value to nil. Because null is often used in JSON to mean
-// ``not present,'' unmarshaling a JSON null into any other Go type has no effect
+// “not present,” unmarshaling a JSON null into any other Go type has no effect
 // on the value and produces no error.
 //
 // When unmarshaling quoted strings, invalid UTF-8 or
 // invalid UTF-16 surrogate pairs are not treated as an error.
 // Instead, they are replaced by the Unicode replacement
 // character U+FFFD.
-//
-func Unmarshal(data []byte, v interface{}) error {
+func Unmarshal(data []byte, v any) error {
 	// Check for well-formedness.
 	// Avoids filling out half a data structure
 	// before discovering a JSON syntax error.
@@ -147,13 +146,13 @@ func (e *InvalidUnmarshalError) Error() string {
 		return "json: Unmarshal(nil)"
 	}
 
-	if e.Type.Kind() != reflect.Ptr {
+	if e.Type.Kind() != reflect.Pointer {
 		return "json: Unmarshal(non-pointer " + e.Type.String() + ")"
 	}
 	return "json: Unmarshal(nil " + e.Type.String() + ")"
 }
 
-func (d *decodeState) unmarshal(v interface{}) (err error) {
+func (d *decodeState) unmarshal(v any) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			if _, ok := r.(runtime.Error); ok {
@@ -164,7 +163,7 @@ func (d *decodeState) unmarshal(v interface{}) (err error) {
 	}()
 
 	rv := reflect.ValueOf(v)
-	if rv.Kind() != reflect.Ptr || rv.IsNil() {
+	if rv.Kind() != reflect.Pointer || rv.IsNil() {
 		return &InvalidUnmarshalError{reflect.TypeOf(v)}
 	}
 
@@ -390,7 +389,7 @@ type unquotedValue struct{}
 // quoted string literal or literal null into an interface value.
 // If it finds anything other than a quoted string literal or null,
 // valueQuoted returns unquotedValue{}.
-func (d *decodeState) valueQuoted() interface{} {
+func (d *decodeState) valueQuoted() any {
 	switch op := d.scanWhile(scanSkipSpace); op {
 	default:
 		d.error(errPhase)
@@ -418,7 +417,7 @@ func (d *decodeState) indirect(v reflect.Value, decodingNull bool) (Unmarshaler,
 	// If v is a named type and is addressable,
 	// start with its address, so that if the type has pointer methods,
 	// we find them.
-	if v.Kind() != reflect.Ptr && v.Type().Name() != "" && v.CanAddr() {
+	if v.Kind() != reflect.Pointer && v.Type().Name() != "" && v.CanAddr() {
 		v = v.Addr()
 	}
 	for {
@@ -426,17 +425,17 @@ func (d *decodeState) indirect(v reflect.Value, decodingNull bool) (Unmarshaler,
 		// usefully addressable.
 		if v.Kind() == reflect.Interface && !v.IsNil() {
 			e := v.Elem()
-			if e.Kind() == reflect.Ptr && !e.IsNil() && (!decodingNull || e.Elem().Kind() == reflect.Ptr) {
+			if e.Kind() == reflect.Pointer && !e.IsNil() && (!decodingNull || e.Elem().Kind() == reflect.Pointer) {
 				v = e
 				continue
 			}
 		}
 
-		if v.Kind() != reflect.Ptr {
+		if v.Kind() != reflect.Pointer {
 			break
 		}
 
-		if v.Elem().Kind() != reflect.Ptr && decodingNull && v.CanSet() {
+		if v.Elem().Kind() != reflect.Pointer && decodingNull && v.CanSet() {
 			break
 		}
 		if v.IsNil() {
@@ -512,10 +511,7 @@ func (d *decodeState) array(v reflect.Value) {
 		if v.Kind() == reflect.Slice {
 			// Grow slice if necessary
 			if i >= v.Cap() {
-				newcap := v.Cap() + v.Cap()/2
-				if newcap < 4 {
-					newcap = 4
-				}
+				newcap := max(v.Cap()+v.Cap()/2, 4)
 				newv := reflect.MakeSlice(v.Type(), v.Len(), newcap)
 				reflect.Copy(newv, v)
 				v.Set(newv)
@@ -561,7 +557,7 @@ func (d *decodeState) array(v reflect.Value) {
 }
 
 var nullLiteral = []byte("null")
-var textUnmarshalerType = reflect.TypeOf(new(encoding.TextUnmarshaler)).Elem()
+var textUnmarshalerType = reflect.TypeFor[encoding.TextUnmarshaler]()
 
 // object consumes an object from d.scan.data[d.scan.offset-1:], decoding into the value v.
 // the first byte ('{') of the object has been read already.
@@ -604,7 +600,7 @@ func (d *decodeState) object(v reflect.Value) {
 			reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
 			reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
 		default:
-			if !reflect.PtrTo(t.Key()).Implements(textUnmarshalerType) {
+			if !reflect.PointerTo(t.Key()).Implements(textUnmarshalerType) {
 				d.saveError(&UnmarshalTypeError{"object", v.Type(), int64(d.scan.offset)})
 				d.scan.offset--
 				d.next() // skip over { } in input
@@ -674,7 +670,7 @@ func (d *decodeState) object(v reflect.Value) {
 				subv = v
 				destring = f.quoted
 				for _, i := range f.index {
-					if subv.Kind() == reflect.Ptr {
+					if subv.Kind() == reflect.Pointer {
 						if subv.IsNil() {
 							subv.Set(reflect.New(subv.Type().Elem()))
 						}
@@ -715,7 +711,7 @@ func (d *decodeState) object(v reflect.Value) {
 			switch {
 			case kt.Kind() == reflect.String:
 				kv = reflect.ValueOf(key).Convert(kt)
-			case reflect.PtrTo(kt).Implements(textUnmarshalerType):
+			case reflect.PointerTo(kt).Implements(textUnmarshalerType):
 				kv = reflect.New(v.Type().Key())
 				d.literalStore(item, kv, true)
 				kv = kv.Elem()
@@ -772,7 +768,7 @@ func (d *decodeState) literal(v reflect.Value) {
 
 // convertNumber converts the number literal s to a float64 or a Number
 // depending on the setting of d.useNumber.
-func (d *decodeState) convertNumber(s string) (interface{}, error) {
+func (d *decodeState) convertNumber(s string) (any, error) {
 	if d.useNumber {
 		return Number(s), nil
 	}
@@ -788,12 +784,12 @@ func (d *decodeState) convertNumber(s string) (interface{}, error) {
 
 	f, err := strconv.ParseFloat(s, 64)
 	if err != nil {
-		return nil, &UnmarshalTypeError{"number " + s, reflect.TypeOf(0.0), int64(d.scan.offset)}
+		return nil, &UnmarshalTypeError{"number " + s, reflect.TypeFor[float64](), int64(d.scan.offset)}
 	}
 	return f, nil
 }
 
-var numberType = reflect.TypeOf(Number(""))
+var numberType = reflect.TypeFor[Number]()
 
 // literalStore decodes a literal stored in item into v.
 //
@@ -845,7 +841,7 @@ func (d *decodeState) literalStore(item []byte, v reflect.Value, fromQuoted bool
 	switch c := item[0]; c {
 	case 'n': // null
 		switch v.Kind() {
-		case reflect.Interface, reflect.Ptr, reflect.Map, reflect.Slice:
+		case reflect.Interface, reflect.Pointer, reflect.Map, reflect.Slice:
 			v.Set(reflect.Zero(v.Type()))
 			// otherwise, ignore null for primitives/string
 		}
@@ -969,7 +965,7 @@ func (d *decodeState) literalStore(item []byte, v reflect.Value, fromQuoted bool
 // but they avoid the weight of reflection in this common case.
 
 // valueInterface is like value but returns interface{}
-func (d *decodeState) valueInterface() interface{} {
+func (d *decodeState) valueInterface() any {
 	switch d.scanWhile(scanSkipSpace) {
 	default:
 		d.error(errPhase)
@@ -985,18 +981,18 @@ func (d *decodeState) valueInterface() interface{} {
 
 var _ARRAY_DEFAULT_CAPACITY = 8
 
-func getArray() []interface{} {
-	return make([]interface{}, 0, _ARRAY_DEFAULT_CAPACITY)
+func getArray() []any {
+	return make([]any, 0, _ARRAY_DEFAULT_CAPACITY)
 }
 
 var _MAP_DEFAULT_CAPACITY = 8
 
-func getMap() map[string]interface{} {
-	return make(map[string]interface{}, _MAP_DEFAULT_CAPACITY)
+func getMap() map[string]any {
+	return make(map[string]any, _MAP_DEFAULT_CAPACITY)
 }
 
 // arrayInterface is like array but returns []interface{}.
-func (d *decodeState) arrayInterface() []interface{} {
+func (d *decodeState) arrayInterface() []any {
 	var v = getArray()
 	for {
 		// Look ahead for ] - can only happen on first iteration.
@@ -1023,7 +1019,7 @@ func (d *decodeState) arrayInterface() []interface{} {
 }
 
 // objectInterface is like object but returns map[string]interface{}.
-func (d *decodeState) objectInterface() map[string]interface{} {
+func (d *decodeState) objectInterface() map[string]any {
 	m := getMap()
 	for {
 		// Read opening " of string key or closing }.
@@ -1069,7 +1065,7 @@ func (d *decodeState) objectInterface() map[string]interface{} {
 }
 
 // literalInterface is like literal but returns an interface value.
-func (d *decodeState) literalInterface() interface{} {
+func (d *decodeState) literalInterface() any {
 	// All bytes inside literal return scanContinue op code.
 	start := d.scan.offset - 1
 	op := d.scanWhile(scanContinue)

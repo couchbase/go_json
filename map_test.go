@@ -1,7 +1,8 @@
 package json
 
 import (
-	"io/ioutil"
+	"os"
+
 	"reflect"
 	"testing"
 )
@@ -21,14 +22,14 @@ const objSrc = `{
       "g": { "n": {"r": "where's tito?"}}
 }`
 
-var obj = map[string]interface{}{}
+var obj = map[string]any{}
 
 var tests = []struct {
 	path string
-	exp  interface{}
+	exp  any
 }{
 	{"", obj},
-	{"/foo", []interface{}{"bar", "baz"}},
+	{"/foo", []any{"bar", "baz"}},
 	{"/foo/0", "bar"},
 	{"/foo/99", nil},
 	{"/foo/0/3", nil},
@@ -75,7 +76,7 @@ func BenchmarkPaths(b *testing.B) {
 func BenchmarkParseAndPath(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		for _, test := range tests {
-			o := map[string]interface{}{}
+			o := map[string]any{}
 			err := Unmarshal([]byte(objSrc), &o)
 			if err != nil {
 				b.Fatalf("Error parsing: %v", err)
@@ -112,7 +113,7 @@ func TestListSpaceBeforeColon(t *testing.T) {
 }
 
 func TestIndexNotFoundSameAsPropertyNotFound(t *testing.T) {
-	data, err := ioutil.ReadFile("testdata/357.json")
+	data, err := os.ReadFile("testdata/357.json")
 	if err != nil {
 		t.Fatalf("Error beer-sample brewery 357 data: %v", err)
 	}

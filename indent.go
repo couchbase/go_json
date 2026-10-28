@@ -74,7 +74,7 @@ func compact(dst *bytes.Buffer, src []byte, escape bool) error {
 func newline(dst *bytes.Buffer, prefix, indent string, depth int) {
 	dst.WriteByte('\n')
 	dst.WriteString(prefix)
-	for i := 0; i < depth; i++ {
+	for range depth {
 		dst.WriteString(indent)
 	}
 }
@@ -236,7 +236,7 @@ func IndentWriter(dst io.Writer, src []byte, prefix, indent string) error {
 func newlineWriter(dst io.Writer, prefix, indent string, depth int) {
 	dst.Write([]byte{'\n'})
 	dst.Write([]byte(prefix))
-	for i := 0; i < depth; i++ {
+	for range depth {
 		dst.Write([]byte(indent))
 	}
 }
