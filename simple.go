@@ -272,6 +272,11 @@ func nextLiteral(scan *scanner) ([]byte, error) {
 		// escape
 		if c == '\\' {
 			scan.offset++
+
+			// the input must not end inside the escape sequence
+			if scan.offset >= l {
+				return nil, &SyntaxError{"unexpected end of JSON input", int64(scan.offset)}
+			}
 			c := scan.data[scan.offset]
 			scan.offset++
 			switch c {
