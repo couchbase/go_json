@@ -60,6 +60,7 @@ import (
 // becomes a member of the object unless
 //   - the field's tag is "-", or
 //   - the field is empty and its tag specifies the "omitempty" option.
+//
 // The empty values are false, 0, any
 // nil pointer or interface value, and any array, slice, map, or string of
 // length zero. The object's default key string is the struct field name
@@ -67,28 +68,28 @@ import (
 // the struct field's tag value is the key name, followed by an optional comma
 // and options. Examples:
 //
-//   // Field is ignored by this package.
-//   Field int `json:"-"`
+//	// Field is ignored by this package.
+//	Field int `json:"-"`
 //
-//   // Field appears in JSON as key "myName".
-//   Field int `json:"myName"`
+//	// Field appears in JSON as key "myName".
+//	Field int `json:"myName"`
 //
-//   // Field appears in JSON as key "myName" and
-//   // the field is omitted from the object if its value is empty,
-//   // as defined above.
-//   Field int `json:"myName,omitempty"`
+//	// Field appears in JSON as key "myName" and
+//	// the field is omitted from the object if its value is empty,
+//	// as defined above.
+//	Field int `json:"myName,omitempty"`
 //
-//   // Field appears in JSON as key "Field" (the default), but
-//   // the field is skipped if empty.
-//   // Note the leading comma.
-//   Field int `json:",omitempty"`
+//	// Field appears in JSON as key "Field" (the default), but
+//	// the field is skipped if empty.
+//	// Note the leading comma.
+//	Field int `json:",omitempty"`
 //
 // The "string" option signals that a field is stored as JSON inside a
 // JSON-encoded string. It applies only to fields of string, floating point,
 // integer, or boolean types. This extra level of encoding is sometimes used
 // when communicating with JavaScript programs:
 //
-//    Int64String int64 `json:",string"`
+//	Int64String int64 `json:",string"`
 //
 // The key name will be used if it's a non-empty string consisting of
 // only Unicode letters, digits, and ASCII punctuation except quotation
@@ -139,7 +140,6 @@ import (
 // JSON cannot represent cyclic data structures and Marshal does not
 // handle them. Passing cyclic structures to Marshal will result in
 // an infinite recursion.
-//
 func Marshal(v interface{}) ([]byte, error) {
 	e := &encodeState{}
 	err := e.marshal(v, encOpts{escapeHTML: true})
@@ -172,7 +172,7 @@ func MarshalNoEscapeToBuffer(v interface{}, buf *bytes.Buffer) error {
 // It is used by stringValue.WriteJSON
 func MarshalStringNoEscapeToBuffer(s string, buf *bytes.Buffer) error {
 	e := &encodeState{Buffer: *buf}
-	e.string(s, false)		// escapeHTML: false
+	e.string(s, false) // escapeHTML: false
 	*buf = e.Buffer
 	return nil
 }
@@ -180,7 +180,7 @@ func MarshalStringNoEscapeToBuffer(s string, buf *bytes.Buffer) error {
 // This specialisation is the same as the above barring escaping HTML (to match Marshal())
 func MarshalStringToBuffer(s string, buf *bytes.Buffer) error {
 	e := &encodeState{Buffer: *buf}
-	e.string(s, true)		// escapeHTML: true
+	e.string(s, true) // escapeHTML: true
 	*buf = e.Buffer
 	return nil
 }
@@ -302,6 +302,16 @@ func (e *encodeState) marshal(v interface{}, opts encOpts) (err error) {
 			err = r.(error)
 		}
 	}()
+
+	// Fast path for plain string.
+	// Plain strings need no type encoder; skip the reflection and encoderCache lookup.
+	// Only taken when escapeHTML is the sole option set, as that is all e.string() honours;
+	// any other option (e.g. quoted) falls through to stringEncoder.
+	if s, ok := v.(string); ok && opts == (encOpts{escapeHTML: opts.escapeHTML}) {
+		e.string(s, opts.escapeHTML)
+		return nil
+	}
+
 	e.reflectValue(reflect.ValueOf(v), opts)
 	return nil
 }
@@ -341,10 +351,7 @@ type encOpts struct {
 
 type encoderFunc func(e *encodeState, v reflect.Value, opts encOpts)
 
-var encoderCache struct {
-	sync.RWMutex
-	m map[reflect.Type]encoderFunc
-}
+var encoderCache sync.Map // map[reflect.Type]encoderFunc
 
 func valueEncoder(v reflect.Value) encoderFunc {
 	if !v.IsValid() {
@@ -354,36 +361,31 @@ func valueEncoder(v reflect.Value) encoderFunc {
 }
 
 func typeEncoder(t reflect.Type) encoderFunc {
-	encoderCache.RLock()
-	f := encoderCache.m[t]
-	encoderCache.RUnlock()
-	if f != nil {
-		return f
+	if fi, ok := encoderCache.Load(t); ok {
+		return fi.(encoderFunc)
 	}
 
 	// To deal with recursive types, populate the map with an
 	// indirect func before we build it. This type waits on the
 	// real func (f) to be ready and then calls it. This indirect
 	// func is only used for recursive types.
-	encoderCache.Lock()
-	if encoderCache.m == nil {
-		encoderCache.m = make(map[reflect.Type]encoderFunc)
-	}
 	var wg sync.WaitGroup
+	var f encoderFunc
+
 	wg.Add(1)
-	encoderCache.m[t] = func(e *encodeState, v reflect.Value, opts encOpts) {
+	fi, loaded := encoderCache.LoadOrStore(t, encoderFunc(func(e *encodeState, v reflect.Value, opts encOpts) {
 		wg.Wait()
 		f(e, v, opts)
-	}
-	encoderCache.Unlock()
+	}))
 
-	// Compute fields without lock.
-	// Might duplicate effort but won't hold other computations back.
+	if loaded {
+		return fi.(encoderFunc)
+	}
+
+	// Compute the real func and replace the indirect func with it.
 	f = newTypeEncoder(t, true)
 	wg.Done()
-	encoderCache.Lock()
-	encoderCache.m[t] = f
-	encoderCache.Unlock()
+	encoderCache.Store(t, f)
 	return f
 }
 
