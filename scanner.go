@@ -15,6 +15,7 @@ package json
 
 import (
 	"strconv"
+	"sync"
 	"unsafe"
 )
 
@@ -33,14 +34,6 @@ func checkValid(data []byte, scan *scanner) error {
 		return scan.err
 	}
 	return nil
-}
-
-// Validate some alleged JSON.  Return nil iff the JSON is valid.
-func Validate(data []byte) error {
-	var sc scanner
-
-	scan := setScanner(&sc, data)
-	return checkValid(data, scan)
 }
 
 // nextValue splits data after the next whole JSON value,
@@ -84,6 +77,38 @@ type SyntaxError struct {
 
 func (e *SyntaxError) Error() string { return e.msg }
 
+// an array or object being unmarshalled, with the current key of an object
+type frame struct {
+	array  []any
+	object map[string]any
+	key    string
+}
+
+// recent object keys, so that a repeated key needs no allocation: objects
+// in an array tend to have the same keys
+type keyCache [32]string
+
+// keyString returns an object key as a string, reusing a recent identical key
+func (cache *keyCache) keyString(b []byte, toString func([]byte) string) string {
+	if len(b) == 0 {
+		return ""
+	}
+	h := (len(b)*31 + int(b[0])*7 + int(b[len(b)-1])) % len(cache)
+	if k := cache[h]; k == string(b) {
+		return k
+	}
+	k := toString(b)
+	cache[h] = k
+	return k
+}
+
+// pop the innermost frame, clearing it so that a reused scanner does not keep its values
+func (scan *scanner) popFrame() {
+	l := len(scan.frames) - 1
+	scan.frames[l] = frame{}
+	scan.frames = scan.frames[:l]
+}
+
 // A scanner is a JSON scanning state machine.
 // Callers call scan.reset() and then pass bytes in one at a time
 // by calling scan.step(&scan, c) for each byte.
@@ -106,8 +131,8 @@ type scanner struct {
 	// []byte to string conversion function
 	toString func([]byte) string
 
-	// stack of nested data
-	values []any
+	// stack of the arrays and objects being unmarshalled
+	frames []frame
 
 	// The step is a func to be called to execute the next transition.
 	step func(*scanner, byte) int
@@ -119,11 +144,19 @@ type scanner struct {
 	// Stack of what we're in the middle of - array values, object keys, object values.
 	parseState []int
 
+	// initial storage for parseState, so that shallow documents need no allocation.
+	// parseState points into the scanner itself: a scanner must not be copied to
+	// a new address while in use (saving and restoring one in place is fine)
+	parseStateBuf [8]int
+
 	// Error that happened, if any.
 	err error
 
 	// NumberParsing
 	useInts bool
+
+	// for Unmarshal: reject the \' escape, and make -9223372036854775808 a float64
+	strict bool
 
 	// 1-byte redo (see undo method)
 	redo      bool
@@ -185,9 +218,39 @@ func fastToString(b []byte) string {
 	return *(*string)(unsafe.Pointer(&b))
 }
 
-// Sets up a scanner
+// As encoding/json, pool scanners for the one shot scans, so that they need no allocation
+var scannerPool = sync.Pool{
+	New: func() any {
+		return &scanner{}
+	},
+}
+
+// Get a scanner from the pool and set it up
+func newScanner(data []byte) *scanner {
+	return setScanner(scannerPool.Get().(*scanner), data)
+}
+
+// Return a scanner to the pool, clearing it so that pooled scanners do not keep
+// the scanned data or the unmarshalled values alive; the frame stack is kept,
+// unless a deep document grew it
+func freeScanner(scan *scanner) {
+	setScanner(scan, nil)
+	if cap(scan.frames) > _POOLED_FRAMES {
+		scan.frames = nil
+	}
+	scannerPool.Put(scan)
+}
+
+const _POOLED_FRAMES = 64
+
+// Sets up a scanner, keeping its frame stack
 func setScanner(scan *scanner, data []byte) *scanner {
-	*scan = scanner{}
+
+	// popped frames are cleared, but an error leaves some behind
+	frames := scan.frames
+	clear(frames)
+	*scan = scanner{frames: frames[:0]}
+	scan.parseState = scan.parseStateBuf[:0]
 	scan.offset = 0
 	scan.data = data
 	scan.checkTop = true
@@ -213,7 +276,7 @@ func (s *scanner) eof() int {
 		return scanEnd
 	}
 	if s.err == nil || len(s.data) == s.offset {
-		s.err = &SyntaxError{"unexpected end of JSON input", int64(s.offset)}
+		s.err = &SyntaxError{_UNEXPECTED_END, int64(s.offset)}
 	}
 	return scanError
 }

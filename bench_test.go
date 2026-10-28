@@ -178,7 +178,7 @@ func BenchmarkAnonymousUnmarshal(b *testing.B) {
 }
 
 func BenchmarkAnonymousUnmarshalBig(b *testing.B) {
-	if codeJSON == nil {
+	if jsonBig == nil {
 		b.StopTimer()
 		initBig()
 		b.StartTimer()

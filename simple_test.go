@@ -17,6 +17,13 @@ import (
 	"testing"
 )
 
+type unmarshalTest struct {
+	in  string
+	ptr any
+	out any
+	err error
+}
+
 // tests
 
 func TestSimpleUnmarshalMarshal(t *testing.T) {
@@ -96,8 +103,8 @@ var simpleUnmarshalTests = []unmarshalTest{
 	{in: `{"X": "foo", "Y"}`, err: &SyntaxError{"invalid character '}' after object key", 17}},
 	{in: `{"X": "foo", "Y"}`, err: &SyntaxError{"invalid character '}' after object key", 17}},
 	{in: `[1, 2, 3+]`, err: &SyntaxError{"invalid character '+' after array element", 9}},
-	{in: `{"X":12x}`, err: &SyntaxError{"invalid character 'x' after object key:value pair", 8}, useNumber: true},
-	{in: `{"X":12} {"Y":13}`, err: &SyntaxError{"invalid character '{' after top-level value", 10}, useNumber: true},
+	{in: `{"X":12x}`, err: &SyntaxError{"invalid character 'x' after object key:value pair", 8}},
+	{in: `{"X":12} {"Y":13}`, err: &SyntaxError{"invalid character '{' after top-level value", 10}},
 
 	// raw value errors
 	{in: "\x01 42", err: &SyntaxError{"invalid character '\\x01' looking for beginning of value", 1}},

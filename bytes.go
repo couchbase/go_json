@@ -117,7 +117,6 @@ func FindDecode(data []byte, path string, into any) error {
 // Find a section of raw JSON by specifying a JSONPointer.
 func Find(data []byte, path string) ([]byte, error) {
 	var lastLiteral string
-	var sc scanner
 
 	if path == "" {
 		return data, nil
@@ -125,7 +124,8 @@ func Find(data []byte, path string) ([]byte, error) {
 
 	needle := parsePointer(path)
 
-	scan := setScanner(&sc, data)
+	scan := newScanner(data)
+	defer freeScanner(scan)
 	scan.reset()
 
 	current := make([]string, 0, 32)
@@ -203,14 +203,13 @@ func mustParseInt(s string) int {
 
 // ListPointers lists all possible pointers from the given input.
 func ListPointers(data []byte) ([]string, error) {
-	var sc scanner
-
 	if len(data) == 0 {
 		return nil, fmt.Errorf("Invalid JSON")
 	}
 	rv := []string{""}
 
-	scan := setScanner(&sc, data)
+	scan := newScanner(data)
+	defer freeScanner(scan)
 	scan.reset()
 
 	beganLiteral := 0
@@ -251,8 +250,6 @@ func ListPointers(data []byte) ([]string, error) {
 
 // FindMany finds several jsonpointers in one pass through the input.
 func FindMany(data []byte, paths []string) (map[string][]byte, error) {
-	var sc1, sc2 scanner
-
 	tpaths := make([]string, 0, len(paths))
 	m := map[string][]byte{}
 	for _, p := range paths {
@@ -264,8 +261,11 @@ func FindMany(data []byte, paths []string) (map[string][]byte, error) {
 	}
 	sort.Strings(tpaths)
 
-	scan := setScanner(&sc1, data)
+	scan := newScanner(data)
+	defer freeScanner(scan)
 	scan.reset()
+	tmp := newScanner(data)
+	defer freeScanner(tmp)
 
 	todo := len(tpaths)
 	beganLiteral := 0
@@ -325,7 +325,7 @@ func FindMany(data []byte, paths []string) (map[string][]byte, error) {
 			}
 
 			// At this point, we have an exact match, so grab it.
-			stmp := setScanner(&sc2, data)
+			stmp := setScanner(tmp, data)
 			stmp.offset = scan.offset
 			val, _, err := nextValue(data, stmp)
 			if err != nil {

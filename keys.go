@@ -36,13 +36,13 @@ type IndexState struct {
 // Find a first level field
 func FindKey(data []byte, field string) ([]byte, error) {
 	var current []byte
-	var sc scanner
 
 	if field == "" {
 		return data, nil
 	}
 
-	scan := setScanner(&sc, data)
+	scan := newScanner(data)
+	defer freeScanner(scan)
 	scan.reset()
 	level := 0
 
@@ -98,9 +98,7 @@ func SetKeyState(state *KeyState, data []byte) {
 
 // release state
 func (state *KeyState) Release() {
-	values := state.scan.values[0:0]
 	state.scan = scanner{}
-	state.scan.values = values
 	state.found = nil
 }
 
@@ -265,13 +263,12 @@ func (state *ScanState) EOS() bool {
 
 // Find an array element
 func FindIndex(data []byte, index int) ([]byte, error) {
-	var sc scanner
-
 	if index < 0 {
 		return nil, fmt.Errorf("invalid array index")
 	}
 
-	scan := setScanner(&sc, data)
+	scan := newScanner(data)
+	defer freeScanner(scan)
 	scan.reset()
 	level := 0
 	position := 0

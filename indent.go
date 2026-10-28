@@ -12,14 +12,9 @@ import (
 // Compact appends to dst the JSON-encoded src with
 // insignificant space characters elided.
 func Compact(dst *bytes.Buffer, src []byte) error {
-	return compact(dst, src, false)
-}
-
-func compact(dst *bytes.Buffer, src []byte, escape bool) error {
-	var sc scanner
-
 	origLen := dst.Len()
-	scan := setScanner(&sc, src)
+	scan := newScanner(src)
+	defer freeScanner(scan)
 	scan.reset()
 
 	start := scan.offset
@@ -31,16 +26,6 @@ func compact(dst *bytes.Buffer, src []byte, escape bool) error {
 		c := scan.data[scan.offset]
 		oldOffset := scan.offset
 		scan.offset++
-		if escape && (c == '<' || c == '>' || c == '&') {
-			if start < oldOffset {
-				dst.Write(src[start:oldOffset])
-			}
-			dst.WriteString(`\u00`)
-			dst.WriteByte(hex[c>>4])
-			dst.WriteByte(hex[c&0xF])
-			start = scan.offset
-			continue
-		}
 		// Convert U+2028 and U+2029 (E2 80 A8 and E2 80 A9).
 		if c == 0xE2 && oldOffset+2 < len(src) && src[oldOffset+1] == 0x80 && src[oldOffset+2]&^1 == 0xA8 {
 			if start < oldOffset {
@@ -91,10 +76,9 @@ func newline(dst *bytes.Buffer, prefix, indent string, depth int) {
 // For example, if src has no trailing spaces, neither will dst;
 // if src ends in a trailing newline, so will dst.
 func Indent(dst *bytes.Buffer, src []byte, prefix, indent string) error {
-	var sc scanner
-
 	origLen := dst.Len()
-	scan := setScanner(&sc, src)
+	scan := newScanner(src)
+	defer freeScanner(scan)
 	scan.reset()
 	needIndent := false
 	depth := 0
@@ -164,9 +148,8 @@ func Indent(dst *bytes.Buffer, src []byte, prefix, indent string) error {
 }
 
 func IndentWriter(dst io.Writer, src []byte, prefix, indent string) error {
-	var sc scanner
-
-	scan := setScanner(&sc, src)
+	scan := newScanner(src)
+	defer freeScanner(scan)
 	scan.reset()
 	needIndent := false
 	depth := 0

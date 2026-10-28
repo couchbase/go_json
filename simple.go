@@ -12,29 +12,38 @@ package json
 import (
 	"fmt"
 	"math"
-	"reflect"
 	"strconv"
 	"unicode/utf8"
 )
 
 // simple and fast decoder skipping the whole Reflect and UnmarshalJSON machinery
 func SimpleUnmarshal(data []byte) (any, error) {
-	var scan scanner
-
-	setScanner(&scan, data)
+	scan := newScanner(data)
+	defer freeScanner(scan)
 	scan.reset()
-	return unmarshaledValue(&scan)
+	return unmarshaledValue(scan)
 }
 
 // as above but avoiding string copies - the input buffer must be guaranteed to be immutable
 func SimpleUnmarshalImmutable(data []byte) (any, error) {
-	var scan scanner
-
-	setScanner(&scan, data)
+	scan := newScanner(data)
+	defer freeScanner(scan)
 	scan.reset()
 	scan.setImmutable()
-	return unmarshaledValue(&scan)
+	return unmarshaledValue(scan)
 }
+
+// initial sizes of arrays and objects: an object of up to 8 fields fits in a
+// single group of a Go map, with no table to allocate
+const (
+	_ARRAY_SIZE  = 4
+	_OBJECT_SIZE = 8
+)
+
+// the nesting limit of encoding/json, which strict decoding keeps to
+const _MAX_STRICT_DEPTH = 10000
+
+var errTooDeep = &SyntaxError{"exceeded max depth", 0}
 
 // this is just to mark that there is no current value
 type unsetType int
@@ -42,7 +51,7 @@ type unsetType int
 const unsetVal = unsetType(iota)
 
 func unmarshaledValue(scan *scanner) (any, error) {
-	var keys []string
+	var keys keyCache
 	var current any
 	var err error
 
@@ -68,7 +77,14 @@ outer:
 				if err != nil {
 					return nil, err
 				}
-				current = scan.toString(bytes)
+
+				// an object key goes straight to its object, with no boxing
+				if n := len(scan.parseState); level > 0 && n > 0 && scan.parseState[n-1] == parseObjectKey {
+					scan.frames[level-1].key = keys.keyString(bytes, scan.toString)
+					current = nil
+				} else {
+					current = scan.toString(bytes)
+				}
 
 			// the value is presumed here, and checked with the next states
 			case 't':
@@ -87,83 +103,66 @@ outer:
 			}
 		case scanBeginArray:
 			level++
-			scan.values = append(scan.values, make([]any, 0, 10))
+			if level > _MAX_STRICT_DEPTH && scan.strict {
+				return nil, errTooDeep
+			}
+			scan.frames = append(scan.frames, frame{array: make([]any, 0, _ARRAY_SIZE)})
 
 			// current will never be returned set to unsetVal - the error will be caught earlier
 			current = unsetVal
 		case scanArrayValue:
-			if level == 0 {
+			if level == 0 || scan.frames[level-1].object != nil {
 				return nil, fmt.Errorf("Unexpected array value, not in array")
 			}
-			top, ok := scan.values[level-1].([]any)
-			if !ok {
-				return nil, fmt.Errorf("Unexpected array value, not in array")
-			}
-			top = append(top, current)
-			scan.values[level-1] = top
+			top := &scan.frames[level-1]
+			top.array = append(top.array, current)
 		case scanEndArray:
 
 			// there's no scanArrayValue before scanEndArray
-			if level == 0 {
+			if level == 0 || scan.frames[level-1].object != nil {
 				return nil, fmt.Errorf("Unexpected array value, not in array")
 			}
-			top, ok := scan.values[level-1].([]any)
-			if !ok {
-				return nil, fmt.Errorf("Unexpected array value, not in array")
-			}
+			top := &scan.frames[level-1]
 
 			// handle empty arrays: only append the current value if it is not unset
 			if current != unsetVal {
-				top = append(top, current)
+				top.array = append(top.array, current)
 			}
-			current = top
+			current = top.array
 			level--
-			scan.values = scan.values[:level]
+			scan.popFrame()
 		case scanBeginObject:
 			level++
-			scan.values = append(scan.values, make(map[string]any, 10))
+			if level > _MAX_STRICT_DEPTH && scan.strict {
+				return nil, errTooDeep
+			}
+			scan.frames = append(scan.frames, frame{object: make(map[string]any, _OBJECT_SIZE)})
 			current = unsetVal
-			keys = append(keys, "")
 		case scanObjectKey:
-			if len(keys) == 0 {
+			if level == 0 || scan.frames[level-1].object == nil {
 				return nil, fmt.Errorf("Unexpected object key, not in object")
 			}
-			key, ok := current.(string)
-			if !ok {
-				return nil, fmt.Errorf("Object key is not a string %v", current)
-			}
-			keys[len(keys)-1] = key
-			current = nil
 		case scanObjectValue:
-			if level == 0 {
+			if level == 0 || scan.frames[level-1].object == nil {
 				return nil, fmt.Errorf("Unexpected object value, not in object")
 			}
-			top, ok := scan.values[level-1].(map[string]any)
-			if !ok {
-				return nil, fmt.Errorf("Unexpected object value, not in object")
-			}
-			key := keys[len(keys)-1]
-			top[key] = current
+			top := &scan.frames[level-1]
+			top.object[top.key] = current
 		case scanEndObject:
 
 			// there's no scanObjectValue before scanEndObject
-			if level == 0 {
+			if level == 0 || scan.frames[level-1].object == nil {
 				return nil, fmt.Errorf("Unexpected object value, not in object")
 			}
-			top, ok := scan.values[level-1].(map[string]any)
-			if !ok {
-				return nil, fmt.Errorf("Unexpected object value, not in object")
-			}
+			top := &scan.frames[level-1]
 
 			// handle empty object: only add the current value if it is not unset
 			if current != unsetVal {
-				key := keys[len(keys)-1]
-				top[key] = current
+				top.object[top.key] = current
 			}
-			current = top
+			current = top.object
 			level--
-			scan.values = scan.values[:level]
-			keys = keys[:len(keys)-1]
+			scan.popFrame()
 		case scanSkipSpace:
 		case scanContinue:
 		case scanEnd:
@@ -195,7 +194,7 @@ outer:
 		return current, nil
 	}
 	if scan.err == nil || len(scan.data) == scan.offset {
-		return nil, &SyntaxError{"unexpected end of JSON input", int64(scan.offset)}
+		return nil, &SyntaxError{_UNEXPECTED_END, int64(scan.offset)}
 	}
 	return nil, scan.err
 }
@@ -208,7 +207,7 @@ func nextLiteral(scan *scanner) ([]byte, error) {
 	start := scan.offset
 	for {
 		if scan.offset >= l {
-			return nil, &SyntaxError{"unexpected end of JSON input", int64(scan.offset)}
+			return nil, &SyntaxError{_UNEXPECTED_END, int64(scan.offset)}
 		}
 		c := scan.data[scan.offset]
 
@@ -240,7 +239,7 @@ func nextLiteral(scan *scanner) ([]byte, error) {
 	usableCap -= 8
 	for {
 		if scan.offset >= l {
-			return nil, &SyntaxError{"unexpected end of JSON input", int64(scan.offset)}
+			return nil, &SyntaxError{_UNEXPECTED_END, int64(scan.offset)}
 		}
 		c := scan.data[scan.offset]
 
@@ -272,12 +271,18 @@ func nextLiteral(scan *scanner) ([]byte, error) {
 
 			// the input must not end inside the escape sequence
 			if scan.offset >= l {
-				return nil, &SyntaxError{"unexpected end of JSON input", int64(scan.offset)}
+				return nil, &SyntaxError{_UNEXPECTED_END, int64(scan.offset)}
 			}
 			c := scan.data[scan.offset]
 			scan.offset++
 			switch c {
-			case '"', '\\', '/', '\'':
+			case '"', '\\', '/':
+				literal[out] = c
+			case '\'':
+				if scan.strict {
+					_ = scan.error(c, "in string escape code")
+					return nil, scan.err
+				}
 				literal[out] = c
 			case 'b':
 				literal[out] = '\b'
@@ -383,15 +388,18 @@ outer:
 		scan.useInts = false
 		if isNeg {
 			return -tot, nil
-		} else {
-			return tot, nil
+		} else if tot == math.MinInt64 && scan.strict {
+
+			// as Unmarshal always has, rather than an int64
+			return float64(tot), nil
 		}
+		return tot, nil
 	}
 	src := string(scan.data[start:scan.offset])
 
 	f, err := strconv.ParseFloat(src, 64)
 	if err != nil {
-		return nil, &UnmarshalTypeError{"number " + src, reflect.TypeFor[float64](), int64(scan.offset)}
+		return nil, &UnmarshalTypeError{Value: "number " + src, Type: float64Type, Offset: int64(scan.offset)}
 	}
 	return f, nil
 }
@@ -405,6 +413,8 @@ func nextScanValue(scan *scanner) ([]byte, error) {
 
 	// avoid cost of scanner allocation
 	// avoid needless stateEndTop error, since we are scanning mid scan
+	// setScanner reuses, and clears, the frame stack shared with saveScan:
+	// it must be empty, as the scan being saved is not unmarshalling
 	saveScan = *scan
 	scan = setScanner(scan, scan.data)
 	scan.reset()
@@ -459,6 +469,8 @@ func nextUnmarshalledValue(scan *scanner) (any, error) {
 	var saveScan scanner
 
 	// avoid cost of scanner allocation
+	// setScanner reuses, and clears, the frame stack shared with saveScan:
+	// it must be empty, as the scan being saved is not unmarshalling
 	saveScan = *scan
 
 	scan = setScanner(scan, scan.data)
@@ -470,6 +482,10 @@ func nextUnmarshalledValue(scan *scanner) (any, error) {
 	scan.checkTop = false
 
 	val, err := unmarshaledValue(scan)
+
+	// on an error, the frames hold the values being built: clear them, rather
+	// than keep them alive until the scanner is next set up
+	clear(scan.frames)
 
 	// unmarshalValue has gone one byte too far
 	saveScan.offset = scan.offset - 1
